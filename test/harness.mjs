@@ -126,7 +126,7 @@ const PAD_STUB = `(function(){
 const BOT_SRC = `(function(){
   if (window.__botInstalled) return; window.__botInstalled = true;
   window.__bot = { on:false, mode:'race', forceTuck:false, forceBrake:false, noTuck:false,
-                   ramX:0, ramZ:0, steerOnly:null };
+                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[] };
   const wrap = a => { while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
   function step(){
     requestAnimationFrame(step);
@@ -143,7 +143,8 @@ const BOT_SRC = `(function(){
     }
     const desired = Math.atan2(tx - T.pos.x, tz - T.pos.z);
     const err = wrap(desired - T.heading);
-    let steer = Math.max(-1, Math.min(1, err*2.4));
+    // heading INCREASE needs stick pushed LEFT (screen-correct steering)
+    let steer = -Math.max(-1, Math.min(1, err*2.4));
     if (b.steerOnly !== null) steer = b.steerOnly;
     // read the road ahead for tuck/brake decisions
     let maxC = 0;
@@ -156,9 +157,9 @@ const BOT_SRC = `(function(){
     if (b.forceBrake) { brake = true; tuck = false; }
     if (b.noTuck) tuck = false;
     window.__fakePad.axes(steer, 0);
-    const btns = [];
+    const btns = b.extraBtns.slice();
     if (tuck) btns.push(0);
-    if (brake) btns.push(2);
+    if (brake) btns.push(1);      // east = brake
     window.__fakePad.press.apply(null, btns);
   }
   requestAnimationFrame(step);
@@ -282,32 +283,136 @@ async function gatesSession(base) {
     await A.bot({ on: true, mode: 'race' });
 
     // tuck = faster: force tuck on, sample; then force brake, speed falls
+    // (early, on the open sweepers, before the tree slalom)
     await A.bot({ noTuck: true });
-    await A.waitTicks(240);
+    await A.waitTicks(180);
     const vNoTuck = await A.eval('__pp.speed');
     await A.bot({ noTuck: false, forceTuck: true });
-    await A.waitTicks(240);
+    await A.waitTicks(180);
     const vTuck = await A.eval('__pp.speed');
-    gate('tuck: holding south raises speed', vTuck > vNoTuck + 1.5,
+    gate('tuck: holding south raises speed', vTuck > vNoTuck + 3,
       `${vNoTuck.toFixed(1)} → ${vTuck.toFixed(1)} m/s`);
     await A.bot({ forceTuck: false, forceBrake: true });
-    await A.waitTicks(160);
+    await A.waitTicks(140);
     const vBrake = await A.eval('__pp.speed');
-    gate('brake: holding west scrubs speed', vBrake < vTuck - 2.5,
+    gate('brake: holding east scrubs speed', vBrake < vTuck - 2.5,
       `${vTuck.toFixed(1)} → ${vBrake.toFixed(1)} m/s`);
     await A.bot({ forceBrake: false });
 
-    // steering at speed actually moves us laterally (real stick input);
-    // recovery back right is the bot steering the stick right for real
-    const u0 = await A.eval('__pp.u');
-    await A.bot({ steerOnly: -1 });
-    await A.waitTicks(35);
-    const uL = await A.eval('__pp.u');
-    await A.bot({ steerOnly: null });
-    await A.waitTicks(240);
-    const uR = await A.eval('__pp.u');
-    gate('steering: stick input changes lateral position', uL < u0 - 0.8 && uR > uL + 1.2,
-      `u ${u0.toFixed(1)} → left ${uL.toFixed(1)} → recovered ${uR.toFixed(1)}`);
+    // ── directional steering: stick, dpad, keyboard — BOTH directions ──
+    // Screen-right is read from the REAL render camera (__pp.camRight) and
+    // the skier's world displacement is projected onto it, so these assert
+    // camera-relative DIRECTION, not merely "lateral position changed".
+    // Between checks the bot recenters on the course line (kept slow with
+    // forceBrake) so each check starts camera-aligned and glance-safe.
+    const latMove = async (apply, release) => {
+      await A.bot({ on: true, noTuck: true, forceBrake: false, extraBtns: [] });
+      await A.waitTicks(110);             // recenter on the line, camera settles
+      if (await A.eval('__pp.speed') > 15) {   // keep the checks glance-safe…
+        await A.bot({ forceBrake: true });
+        await A.waitFor('__pp.speed < 15', 20000, 'settle steer-test speed');
+        await A.bot({ forceBrake: false });
+        await A.waitTicks(30);
+      }
+      // …but never so slow the carve has no pace
+      await A.waitFor(`__pp.speed > 6 && !__pp.wobble && __pp.state==='run'`, 20000, 'pace for steer test');
+      await A.bot({ on: false });
+      await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+      await A.waitTicks(10);              // steer smoothing returns to center
+      const s0 = await A.eval('({x:__pp.pos.x,z:__pp.pos.z,rx:__pp.camRight.x,rz:__pp.camRight.z})');
+      await apply();
+      await A.waitTicks(60);
+      await release();
+      const s1 = await A.eval('({x:__pp.pos.x,z:__pp.pos.z,st:__pp.state})');
+      if (s1.st !== 'run') throw new Error('crashed during steering test');
+      return (s1.x - s0.x) * s0.rx + (s1.z - s0.z) * s0.rz;
+    };
+    const stickR = await latMove(() => A.eval('__fakePad.axes(1,0)'), () => A.eval('__fakePad.axes(0,0)'));
+    const stickL = await latMove(() => A.eval('__fakePad.axes(-1,0)'), () => A.eval('__fakePad.axes(0,0)'));
+    gate('steer: stick lx=+1 carves toward screen-RIGHT', stickR > 0.8, `lat ${stickR.toFixed(2)} m`);
+    gate('steer: stick lx=-1 carves toward screen-LEFT', stickL < -0.8, `lat ${stickL.toFixed(2)} m`);
+    const dpadR = await latMove(() => A.press(15), () => A.press());
+    const dpadL = await latMove(() => A.press(14), () => A.press());
+    gate('steer: dpad-right carves toward screen-RIGHT', dpadR > 0.8, `lat ${dpadR.toFixed(2)} m`);
+    gate('steer: dpad-left carves toward screen-LEFT', dpadL < -0.8, `lat ${dpadL.toFixed(2)} m`);
+    const keyR = await latMove(() => A.key('ArrowRight', 'ArrowRight', 39, true), () => A.key('ArrowRight', 'ArrowRight', 39, false));
+    const keyL = await latMove(() => A.key('ArrowLeft', 'ArrowLeft', 37, true), () => A.key('ArrowLeft', 'ArrowLeft', 37, false));
+    gate('steer: ArrowRight carves toward screen-RIGHT', keyR > 0.8, `lat ${keyR.toFixed(2)} m`);
+    gate('steer: ArrowLeft carves toward screen-LEFT', keyL < -0.8, `lat ${keyL.toFixed(2)} m`);
+    await A.bot({ on: true, mode: 'race', noTuck: false });
+
+    // ── west = jump / trick suite, on the open stretch before ramp 2 ──
+    // (turbo 1 so 0.5 s of air is observable through real polling)
+    await A.waitFor('__pp.s > 820', 180000, 'open stretch before gate 2');
+    await A.eval('window.__ppTurbo = 1');
+    // settle below the no-tuck terminal speed so plain drag can't mimic a
+    // brake over the measurement window
+    if (await A.eval('__pp.speed') > 18) {
+      await A.bot({ forceBrake: true });
+      await A.waitFor('__pp.speed < 18', 30000, 'settle below no-tuck terminal');
+      await A.bot({ forceBrake: false });
+    }
+    // (pad "press" edges need a couple of released frames first — always
+    // pause ≥150 ms real time between clearing west and pressing it again)
+    // holding west must NOT brake any more (one hop edge, then nothing)
+    await sleep(200);
+    const vW0 = await A.eval('__pp.speed');
+    await A.bot({ extraBtns: [2], noTuck: true });
+    await A.waitTicks(150, 30000);
+    const vW1 = await A.eval('__pp.speed');
+    await A.bot({ extraBtns: [], noTuck: false });
+    gate('brake: holding west does NOT brake (old binding gone)', vW1 > vW0 - 1.0,
+      `v ${vW0.toFixed(1)} → ${vW1.toFixed(1)} over 150 ticks`);
+    // flat hop: press west → real vertical impulse → clean landing
+    await sleep(250);
+    const vHop0 = await A.eval('__pp.speed');
+    await A.bot({ extraBtns: [2] });
+    let hopUp = true;
+    try { await A.waitFor('__pp.air === true', 4000, 'hop leaves ground'); } catch { hopUp = false; }
+    await A.bot({ extraBtns: [] });
+    gate('jump: west press on flat leaves the ground', hopUp);
+    await A.waitFor('__pp.air === false', 10000, 'hop lands');
+    const hopSt = await A.eval('({st:__pp.state, v:__pp.speed})');
+    gate('jump: flat hop lands clean — no crash, no speed penalty',
+      hopSt.st === 'run' && hopSt.v > vHop0 - 2.0, `v ${vHop0.toFixed(1)} → ${hopSt.v.toFixed(1)}`);
+    // full trick off ramp 2: tuck in hot for real airtime, launch, spin,
+    // land with boost + popup
+    await A.bot({ forceTuck: true });
+    await A.waitFor('__pp.air === true && __pp.s > 975', 90000, 'ramp 2 launch');
+    await A.bot({ forceTuck: false, extraBtns: [2] });
+    await A.waitFor('__pp.trick === true', 3000, 'trick starts mid-air');
+    await A.bot({ extraBtns: [] });
+    gate('trick: west mid-air starts a trick', true);
+    await A.waitFor('__pp.trick === false && __pp.air === true', 5000, 'trick completes in air');
+    const vAir = await A.eval('__pp.speed');
+    await A.waitFor('__pp.air === false', 8000, 'trick landing');
+    const landed = await A.eval(`({v:__pp.speed, st:__pp.state, pop:document.getElementById('trickPop').classList.contains('show')})`);
+    gate('trick: completed trick lands with a speed boost', landed.st === 'run' && landed.v > vAir * 1.04,
+      `v air ${vAir.toFixed(1)} → landed ${landed.v.toFixed(1)}`);
+    gate('trick: TRICK! +BOOST popup shown', landed.pop);
+    // landing mid-trick must be a wobble, NEVER a crash (kid mercy rule).
+    // Airtime downhill is long and varies, so chain trick presses — the
+    // landing then interrupts one mid-spin. Up to 3 hops until observed.
+    let wob = null;
+    for (let attempt = 0; attempt < 3 && !(wob && wob.wob); attempt++) {
+      await A.bot({ extraBtns: [], noTuck: true });
+      await sleep(250);
+      await A.bot({ extraBtns: [2] });
+      try { await A.waitFor('__pp.air === true', 6000, 'wobble-test hop'); } catch { continue; }
+      for (let i = 0; i < 60; i++) {
+        await A.bot({ extraBtns: [] });
+        await sleep(45);
+        await A.bot({ extraBtns: [2] });
+        await sleep(45);
+        const st = await A.eval('({air:__pp.air, st:__pp.state, wob:__pp.wobble, trick:__pp.trick})');
+        if (!st.air) { wob = st; break; }
+      }
+      await A.bot({ extraBtns: [] });
+    }
+    await A.bot({ noTuck: false });
+    gate('trick: landing mid-trick = wobble, never a crash',
+      !!wob && wob.st === 'run' && wob.wob && !wob.trick, JSON.stringify(wob));
+    await A.eval('window.__ppTurbo = 8');
 
     // crash into a slalom tree at speed → tumble → checkpoint respawn
     const course = await A.eval('window.__ppCourse');
@@ -344,6 +449,10 @@ async function gatesSession(base) {
     const tickP2 = await A.eval('__pp.tick');
     gate('pause: sim tick freezes', tickP === tickP2, `tick ${tickP}`);
     await A.tapButton(13);              // down → RESTART RUN
+    // event-drop tolerance: confirm only once RESTART is visibly selected
+    if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) {
+      await A.tapButton(13);
+    }
     await A.tapButton(0);               // south → confirm
     await A.waitFor(`(__pp.state==='countdown'||__pp.state==='run') && __pp.s < 40`, 8000, 'restart');
     gate('pause menu: RESTART RUN restarts from the top', true);
@@ -425,17 +534,65 @@ async function kbdSession(base) {
     const vBrake = await A.eval('__pp.speed');
     await A.key('ArrowUp', 'ArrowUp', 38, false);
     gate('kbd: ArrowUp brake decelerates', vBrake < vTuck - 2, `${vTuck.toFixed(1)} → ${vBrake.toFixed(1)}`);
-    const u0 = await A.eval('__pp.u');
-    await A.key('ArrowLeft', 'ArrowLeft', 37, true);
-    await A.waitTicks(50);
-    await A.key('ArrowLeft', 'ArrowLeft', 37, false);
-    const uL = await A.eval('__pp.u');
-    gate('kbd: ArrowLeft steers left', uL < u0 - 0.6, `u ${u0.toFixed(1)} → ${uL.toFixed(1)}`);
+    // directional: displacement projected on the real camera's screen-right.
+    // Settle under tuck first (keeps speed up even pointed cross-slope) so
+    // the chase camera is aligned and the carve has real pace.
+    const kLat = async (key, vk) => {
+      await A.key('ArrowDown', 'ArrowDown', 40, true);
+      await A.waitTicks(170);
+      await A.key('ArrowDown', 'ArrowDown', 40, false);
+      await A.waitTicks(10);
+      const s0 = await A.eval('({x:__pp.pos.x,z:__pp.pos.z,rx:__pp.camRight.x,rz:__pp.camRight.z})');
+      await A.key(key, key, vk, true);
+      await A.waitTicks(60);
+      await A.key(key, key, vk, false);
+      const s1 = await A.eval('({x:__pp.pos.x,z:__pp.pos.z})');
+      return (s1.x - s0.x) * s0.rx + (s1.z - s0.z) * s0.rz;
+    };
+    // restart between the two directional tests: each starts from a clean,
+    // on-piste, downhill-facing state (no respawn-teleport contamination)
+    const kbdRestart = async () => {
+      await A.tapKey('Escape', 'Escape', 27);
+      await A.waitFor(`__pp.state==='pause'`, 5000, 'pause for restart');
+      await A.tapKey('ArrowDown', 'ArrowDown', 40);
+      if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) {
+        await A.tapKey('ArrowDown', 'ArrowDown', 40);
+      }
+      await A.tapKey('Enter', 'Enter', 13);
+      await A.waitFor(`__pp.state==='run'`, 10000, 'restarted run');
+    };
+    const kR = await kLat('ArrowRight', 39);
+    await kbdRestart();
+    const kL = await kLat('ArrowLeft', 37);
+    gate('kbd: ArrowRight carves toward screen-RIGHT', kR > 1.0, `lat ${kR.toFixed(2)} m`);
+    gate('kbd: ArrowLeft carves toward screen-LEFT', kL < -1.0, `lat ${kL.toFixed(2)} m`);
+    await kbdRestart();
+    // Space and X both jump (turbo 1 so the 0.5 s hop is observable)
+    await A.eval('window.__ppTurbo = 1');
+    await A.key(' ', 'Space', 32, true);
+    let spaceAir = true;
+    try { await A.waitFor('__pp.air === true', 4000, 'Space hop'); } catch { spaceAir = false; }
+    await A.key(' ', 'Space', 32, false);
+    gate('kbd: Space jumps', spaceAir);
+    await A.waitFor('__pp.air === false', 8000, 'Space hop lands');
+    await A.key('x', 'KeyX', 88, true);
+    let xAir = true;
+    try { await A.waitFor('__pp.air === true', 4000, 'X hop'); } catch { xAir = false; }
+    await A.key('x', 'KeyX', 88, false);
+    gate('kbd: X jumps too', xAir);
+    await A.waitFor('__pp.air === false', 8000, 'X hop lands');
+    const postJump = await A.eval('__pp.state');
+    gate('kbd: hops land clean, still running', postJump === 'run', postJump);
+    await A.eval('window.__ppTurbo = 8');
     await A.tapKey('Escape', 'Escape', 27);
     await A.waitFor(`__pp.state==='pause'`, 5000, 'kbd pause');
     const tp = await A.eval('__pp.tick'); await sleep(350);
     gate('kbd: Escape pauses, tick frozen', tp === await A.eval('__pp.tick'));
     await A.tapKey('ArrowDown', 'ArrowDown', 40);
+    // event-drop tolerance: confirm only once RESTART is visibly selected
+    if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) {
+      await A.tapKey('ArrowDown', 'ArrowDown', 40);
+    }
     await A.tapKey('Enter', 'Enter', 13);
     await A.waitFor(`(__pp.state==='countdown'||__pp.state==='run') && __pp.s < 40`, 8000, 'kbd restart');
     gate('kbd: pause menu restart works', true);
@@ -472,12 +629,16 @@ async function shotsSession(base) {
     await at(255, '02-open-speed');
     await at(640, '03-slalom');
     await at(742, '04-hairpin-chevrons');
-    // mid-air off ramp 2 (s≈1000) — drop to real time so we catch the moment
+    // mid-air TRICK off ramp 2 (s≈1000) — drop to real time, press west in
+    // the air, then catch the skier mid-backflip
     await A.waitFor(`__pp.s > 930`, 120000, 'near ramp 2');
     await A.eval('window.__ppTurbo = 1');
     await A.waitFor(`__pp.mode==='air'`, 30000, 'airborne');
-    await sleep(260);
-    await A.shot('05-midair');
+    await A.bot({ extraBtns: [2] });
+    await A.waitFor('__pp.trick === true', 3000, 'trick spinning');
+    await A.bot({ extraBtns: [] });
+    await sleep(270);
+    await A.shot('05-midair-trick');
     await A.eval('window.__ppTurbo = 3');
     // pause menu
     await A.waitFor(`__pp.s > 1150`, 120000, 'mid course');
@@ -538,7 +699,33 @@ async function ipadSession(base) {
     await A.waitFor(`__pp.state==='run'`, 8000, 'touch run');
     const touchUI = await A.eval(`document.body.classList.contains('input-touch')`);
     gate('touch: input-touch class active (touch UI shown)', touchUI);
+    // JUMP + BRAKE stack in the left corner: both ≥60px on screen, no overlap
+    const rects = await A.eval(`(() => {
+      const r = id => { const b = document.getElementById(id).getBoundingClientRect();
+        return { l: b.left, t: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height }; };
+      return { jump: r('tbtnJump'), brake: r('tbtnBrake'), tuck: r('tbtnTuck') };
+    })()`);
+    const sep = rects.jump.t >= rects.brake.b || rects.brake.t >= rects.jump.b ||
+                rects.jump.l >= rects.brake.r || rects.brake.l >= rects.jump.r;
+    gate('touch: JUMP and BRAKE both ≥60px targets, non-overlapping',
+      rects.jump.w >= 60 && rects.jump.h >= 60 && rects.brake.w >= 60 && rects.brake.h >= 60 && sep,
+      `jump ${rects.jump.w.toFixed(0)}px, brake ${rects.brake.w.toFixed(0)}px, sep=${sep}`);
+    // real touch on JUMP → real hop
     await sleep(2500);
+    const jc = { x: (rects.jump.l + rects.jump.r) / 2, y: (rects.jump.t + rects.jump.b) / 2 };
+    await tap(jc.x, jc.y);
+    let touchAir = true;
+    try { await A.waitFor('__pp.air === true', 4000, 'touch hop'); } catch { touchAir = false; }
+    gate('touch: JUMP button hops', touchAir);
+    await A.waitFor('__pp.air === false', 8000, 'touch hop lands');
+    // held BRAKE slows the run
+    const vT0 = await A.eval('__pp.speed');
+    const bc = { x: (rects.brake.l + rects.brake.r) / 2, y: (rects.brake.t + rects.brake.b) / 2 };
+    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bc.x, y: bc.y }] });
+    await A.waitTicks(120, 20000);
+    const vT1 = await A.eval('__pp.speed');
+    await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    gate('touch: BRAKE button scrubs speed', vT1 < vT0 - 1.0, `v ${vT0.toFixed(1)} → ${vT1.toFixed(1)}`);
     await A.shot('09-ipad-portrait');
     gate('zero console errors/warnings (ipad session)', A.consoleBad.length === 0,
       A.consoleBad.slice(0, 4).join(' | ') || 'clean');
@@ -582,12 +769,40 @@ async function timeSession(base) {
   }
 }
 
+/* ═══════════════ TUCK MEASURE — steady-state tuck speed, opening straight ═══════════════ */
+async function tuckSession(base) {
+  console.log('\n── tuck steady-state measure (?turbo=8, forceTuck from GO) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await sleep(400);
+    await A.tapButton(0);
+    await A.waitFor(`__pp.state==='run'`, 10000, 'run');
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race', forceTuck: true });
+    const samples = [];
+    for (const s of [150, 200, 250, 300, 350]) {
+      await A.waitFor(`__pp.s >= ${s}`, 60000, 'reach s=' + s);
+      samples.push([s, await A.eval('__pp.speed')]);
+    }
+    console.log('tuck speeds: ' + samples.map(([s, v]) => `s=${s}: ${v.toFixed(1)} m/s`).join(', '));
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
 /* ═══════════════ main ═══════════════ */
 const which = process.argv[2] || 'all';
 const { srv, port: httpPort } = await serve();
 const base = `http://127.0.0.1:${httpPort}`;
 try {
   if (which === 'time') await timeSession(base);
+  if (which === 'tuck') await tuckSession(base);
   if (which === 'all' || which === 'gates') await gatesSession(base);
   if (which === 'all' || which === 'kbd') await kbdSession(base);
   if (which === 'all' || which === 'shots') await shotsSession(base);

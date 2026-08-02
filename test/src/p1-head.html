@@ -137,6 +137,22 @@
     writing-mode: horizontal-tb;
   }
 
+  /* trick landing popup — skewed navy panel like the rest of the HUD */
+  #trickPop {
+    left: 50%; top: 156px; width: 320px; height: 48px; margin-left: -160px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 23px; font-weight: 700; letter-spacing: 4px; color: #ffd23e;
+    opacity: 0; pointer-events: none; will-change: opacity, transform;
+  }
+  #trickPop.show { animation: trickpop 1.4s ease-out forwards; }
+  @keyframes trickpop {
+    0% { opacity: 0; transform: translateY(-10px) scale(0.9); }
+    12% { opacity: 1; transform: translateY(0) scale(1.06); }
+    22% { transform: scale(1); }
+    75% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   /* center flash text (CHECKPOINT / GO / FINISH) */
   #flash {
     position: absolute; left: 0; right: 0; top: 200px;
@@ -193,6 +209,7 @@
   }
   #titleHint {
     position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%);
+    width: 1240px;
     font-size: 12px; letter-spacing: 2px; color: #e8ecff;
     text-shadow: 0 1px 0 #20233d;
     text-align: center; line-height: 1.9;
@@ -274,7 +291,9 @@
     pointer-events: auto;
   }
   .tbtn.held { background: rgba(255,210,62,0.5); border-color: #ffd23e; }
-  #tbtnBrake { left: 26px; }
+  /* left corner: JUMP big at the thumb, BRAKE stacked above it (no overlap) */
+  #tbtnJump { left: 26px; }
+  #tbtnBrake { left: 32px; bottom: 208px; width: 80px; height: 80px; font-size: 13px; }
   #tbtnTuck { right: 26px; }
   #tbtnPause {
     position: absolute; top: 14px; right: 14px; width: 52px; height: 44px;
@@ -319,6 +338,7 @@
     </div>
 
     <div id="flash"></div>
+    <div id="trickPop" class="panel">TRICK! +BOOST</div>
   </div>
 
   <div id="title">
@@ -328,7 +348,7 @@
     </div>
     <div id="pressStart">PRESS ✕ TO SKI</div>
     <div id="titleBest"></div>
-    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · HOLD ▢ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE</div>
+    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · ▢ JUMP + AIR TRICK · HOLD ○ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE · SPACE JUMP / TRICK</div>
   </div>
 
   <div id="countdownEl"></div>
@@ -357,6 +377,7 @@
   <div id="touchUI">
     <div class="tzone" id="tzoneL"></div>
     <div class="tzone" id="tzoneR"></div>
+    <div class="tbtn" id="tbtnJump">JUMP</div>
     <div class="tbtn" id="tbtnBrake">BRAKE</div>
     <div class="tbtn" id="tbtnTuck">TUCK</div>
     <div id="tbtnPause">II</div>

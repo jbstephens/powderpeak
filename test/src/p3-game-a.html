@@ -25,9 +25,19 @@ try {
 const TURBO = Math.min(30, Math.max(0, parseInt(QS.get('turbo') || '0', 10) || 0));
 
 const BEST_KEY = 'powderpeak_best';
-// Medal thresholds (seconds) vs the authored run. Tuned against the
-// verification bot: bot with clean-ish line ≈ gold - a few seconds.
-const MEDALS = { gold: 100, silver: 118, bronze: 150 };
+// Medal thresholds (seconds) vs the authored run. Recalibrated against the
+// verification bot after the tuck retune (same gold:silver:bronze ratios).
+const MEDALS = { gold: 93, silver: 110, bronze: 140 };
+
+/* speed + air tuning */
+const CD_RUN = 0.0042;        // upright air drag
+const CD_TUCK = 0.0018;       // tucked air drag (was 0.0020 — more top end)
+const TUCK_ACCEL = 0.9;       // m/s^2 push while tucked: tuck bites instantly
+const HOP_VY = 3.0;           // ground hop impulse (west button)
+const RAMP_JUMP_VY = [4.0, 9.5, 0.26]; // min, max, v-scale for a timed ramp jump
+const TRICK_TIME = 0.5;       // seconds of spin per trick
+const TRICK_BOOST = 0.08;     // +8% speed per completed trick on landing
+const VMAX_BOOST = 48;        // landing-boost speed cap (m/s)
 
 /* ───────────────────────── tiny math utils ───────────────────────── */
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;

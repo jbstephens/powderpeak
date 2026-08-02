@@ -3,6 +3,8 @@
 const TL = {
   tick: 0, state: 'title', speed: 0, pos: { x: 0, y: 0, z: 0 }, checkpoint: 0,
   mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
+  air: false, trick: false, tricks: 0, wobble: false,
+  camRight: { x: 0, z: 0 },   // the REAL render camera's screen-right, in world
   perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
 };
 window.__pp = TL;
@@ -15,6 +17,12 @@ function syncTelemetry() {
   TL.mode = P.air ? 'air' : (P.crashT > 0 ? 'crash' : 'ground');
   TL.heading = P.heading;
   TL.s = P.s; TL.u = P.u; TL.time = runTime;
+  TL.air = P.air;
+  TL.trick = P.trickT > 0;
+  TL.tricks = P.tricksDone;
+  TL.wobble = P.wobbleT > 0;
+  const me = camera.matrixWorld.elements;  // column 0 = camera local X = screen-right
+  TL.camRight.x = me[0]; TL.camRight.z = me[2];
 }
 // static course/obstacle dumps — data a player can see, for the harness bot
 (function dumpStatics() {
@@ -63,7 +71,8 @@ function updateCamera(dt, now) {
     camDir.z += (dz - camDir.z) * kd;
     const dl = Math.hypot(camDir.x, camDir.z) || 1;
     camDir.x /= dl; camDir.z /= dl;
-    const dist = 9.2 + (P.air ? 1.5 : 0) + P.v * 0.045;
+    // trick-cam: punch in while the skier spins so the flip reads on screen
+    const dist = 9.2 + (P.air ? 1.5 : 0) + P.v * 0.045 - (P.trickT > 0 ? 4.6 : 0);
     const kp = Math.min(1, dt * 6.5);
     camPos.x += (P.x - camDir.x * dist - camPos.x) * kp;
     camPos.y += (P.y + 3.7 - camPos.y) * kp;
@@ -75,9 +84,9 @@ function updateCamera(dt, now) {
     // never sink the camera into the snow
     const ch = terrainH(camPos.x, camPos.z);
     if (camPos.y < ch + 1.6) camPos.y = ch + 1.6;
-    const wantFov = 63 + clamp(P.v, 0, 34) * 0.33;
-    if (Math.abs(wantFov - camFov) > 0.3) {
-      camFov = wantFov;
+    const wantFov = 63 + clamp(P.v, 0, 34) * 0.33 - (P.trickT > 0 ? 9 : 0);
+    camFov += (wantFov - camFov) * Math.min(1, dt * 7);
+    if (Math.abs(camFov - camera.fov) > 0.25) {
       camera.fov = camFov;
       camera.updateProjectionMatrix();
     }
@@ -115,7 +124,10 @@ function updateSkier(dt) {
   const targetRoll = -inp.steer * 0.40 * Math.min(1, P.v / 16) + clamp(P.latSlope, -0.8, 0.8) * 0.35;
   smRoll += (targetRoll - smRoll) * Math.min(1, dt * 7);
   skier.rotation.y = P.heading;
-  skier.rotation.x = smPitch;
+  // air trick: a full backflip over TRICK_TIME (ends exactly re-aligned)
+  skier.rotation.x = P.trickT > 0
+    ? smPitch - (1 - P.trickT / TRICK_TIME) * Math.PI * 2
+    : smPitch;
   skier.rotation.z = smRoll;
 
   const hipY = 0.95 - 0.34 * poseCrouch;
@@ -181,7 +193,7 @@ function updateHUD() {
   if (kmh !== lastKmh) {
     lastKmh = kmh;
     speedNum.textContent = String(kmh);
-    const deg = -128 + clamp(kmh, 0, 140) / 140 * 256;
+    const deg = -128 + clamp(kmh, 0, 160) / 160 * 256;
     needle.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
   }
   if (P.curI !== lastMarkI) {
