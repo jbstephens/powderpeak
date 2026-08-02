@@ -524,15 +524,34 @@ scene.add(skyGroup);
   const md = newMD();
   const rr = mulberry32(SEED ^ 0x9ea1);
   const fogc = [0.949, 0.694, 0.651];
+  // A peak's jagged base reaches ~1.3×rad. The course winds back on itself,
+  // so "700m beside sample k" can still sit ON a later switchback — check the
+  // footprint against every course sample, not just the anchor.
+  const PEAK_CLEAR = 130;
+  function onCourse(px, pz, rad) {
+    const r2 = (rad * 1.3 + PEAK_CLEAR) * (rad * 1.3 + PEAK_CLEAR);
+    for (let i = 0; i < NS; i++) {
+      const dx = CX[i] - px, dz = CZ[i] - pz;
+      if (dx * dx + dz * dz < r2) return true;
+    }
+    return false;
+  }
+  window.__ppPeaks = [];
   for (let k = 0; k < 14; k++) {
     const ci = Math.floor((k / 14) * (NS - 1));
     const side = k % 2 === 0 ? -1 : 1;
-    const dist = lerp(420, 700, rr());
-    const px = CX[ci] + CRX[ci] * side * dist + (rr() - 0.5) * 200;
-    const pz = CZ[ci] + CRZ[ci] * side * dist + (rr() - 0.5) * 200;
+    let dist = 0, px = 0, pz = 0, rad = 0, h = 0, placed = false;
+    for (let tr = 0; tr < 24 && !placed; tr++) {
+      dist = lerp(420, 700, rr()) + tr * 30;
+      px = CX[ci] + CRX[ci] * side * dist + (rr() - 0.5) * 200;
+      pz = CZ[ci] + CRZ[ci] * side * dist + (rr() - 0.5) * 200;
+      rad = lerp(150, 280, rr()); h = lerp(170, 330, rr());
+      placed = !onCourse(px, pz, rad);
+    }
+    if (!placed) continue; // rather one fewer peak than a blindfold on the piste
     const baseY = CY[ci] - 40;
-    const rad = lerp(150, 280, rr()), h = lerp(170, 330, rr());
-    const haze = lerp(0.50, 0.72, (dist - 420) / 280);
+    const haze = lerp(0.50, 0.72, Math.min(1, (dist - 420) / 280));
+    window.__ppPeaks.push({ x: px, z: pz, r: rad * 1.3 });
     const jitters = [];
     for (let s2 = 0; s2 < 10; s2++) jitters.push(lerp(0.7, 1.3, rr()));
     // snow massif: shade first, then hand-mix toward fog for aerial haze

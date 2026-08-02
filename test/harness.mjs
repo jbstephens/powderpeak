@@ -267,6 +267,20 @@ async function gatesSession(base) {
 
     gate('boot: telemetry present, state=title', await A.eval(`__pp.state`) === 'title');
 
+    // scenery may never sit on the piste: every backdrop peak's footprint
+    // must clear every course sample (regression: sector-2 "blind pyramid")
+    const pk = JSON.parse(await A.eval(`JSON.stringify((function(){
+      const P = window.__ppPeaks || [], C = window.__ppCourse || [];
+      let worst = 1e9;
+      for (const p of P) for (const c of C) {
+        const d = Math.hypot(c.x - p.x, c.z - p.z) - p.r;
+        if (d < worst) worst = d;
+      }
+      return { n: P.length, worst: Math.round(worst) };
+    })())`));
+    gate('backdrop peaks clear the course (margin ≥ 100m)', pk.n >= 10 && pk.worst >= 100,
+      `${pk.n} peaks, worst margin ${pk.worst}m`);
+
     // title → south → countdown → run
     await A.tapButton(0);
     await A.waitFor(`__pp.state==='countdown'||__pp.state==='run'`, 6000, 'run start');
