@@ -4,6 +4,8 @@ const TL = {
   tick: 0, state: 'title', speed: 0, pos: { x: 0, y: 0, z: 0 }, checkpoint: 0,
   mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
   air: false, trick: false, tricks: 0, wobble: false,
+  mountain: '', trickName: '', airTricks: 0, boostPct: 0,
+  snowman: false, goldArch: false, selectSel: 0,
   camRight: { x: 0, z: 0 },   // the REAL render camera's screen-right, in world
   perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
 };
@@ -19,23 +21,86 @@ function syncTelemetry() {
   TL.s = P.s; TL.u = P.u; TL.time = runTime;
   TL.air = P.air;
   TL.trick = P.trickT > 0;
-  TL.tricks = P.tricksDone;
+  TL.tricks = P.airN;
   TL.wobble = P.wobbleT > 0;
+  TL.mountain = W ? W.cfg.id : '';
+  TL.trickName = lastTrickName;
+  TL.airTricks = P.airN;
+  TL.boostPct = lastBoostPct;
+  TL.snowman = smHitThisRun;
+  TL.goldArch = W ? W.goldTrim.visible : false;
+  TL.selectSel = selectSel;
   const me = camera.matrixWorld.elements;  // column 0 = camera local X = screen-right
   TL.camRight.x = me[0]; TL.camRight.z = me[2];
 }
-// static course/obstacle dumps — data a player can see, for the harness bot
-(function dumpStatics() {
-  const c = [];
-  for (let i = 0; i < NS; i += 3) {
-    c.push({ i, s: i * STEP, x: CX[i], y: CY[i], z: CZ[i], curv: CCURV[i], w: CW[i], style: CSTYLE[i], ramp: CRAMP[i] });
+
+/* ═════════════════ mountain switching ═════════════════ */
+const MTN_ORDER = ['alp', 'nr'];
+function setMountain(id) {
+  const nw = WORLDS[id];
+  if (W && W !== nw) {
+    for (let i = 0; i < W.tiles.length; i++) W.tiles[i].mesh.visible = false;
+    W.sky.visible = false;
+    W.peaksMesh.visible = false;
+    W.snowman.mesh.visible = false;
+    W.goldTrim.visible = false;
+    if (W.glowMesh) W.glowMesh.visible = false;
   }
-  window.__ppCourse = c;
-  const o = [];
-  for (let i = 0; i < ONUM; i++) o.push({ x: OX[i], z: OZ[i], r: OR[i] });
-  window.__ppObstacles = o;
-  window.__ppGates = { gates: GATES.map(g => g * STEP), finish: FINISH_I * STEP, len: COURSE_LEN };
-})();
+  W = nw;
+  NSM = W.NSM;
+  CX = W.CX; CZ = W.CZ; CY = W.CY; CDX = W.CDX; CDZ = W.CDZ; CRX = W.CRX; CRZ = W.CRZ;
+  CCURV = W.CCURV; CW = W.CW; CBANK = W.CBANK; CRAMP = W.CRAMP; CWL = W.CWL; CWR = W.CWR; CSTYLE = W.CSTYLE;
+  GATES = W.GATES; RAMPS = W.RAMPS; FINISH_I = W.FINISH_I;
+  terrainInfo = W.terrainInfo; terrainH = W.terrainH; terrainGrad = W.terrainGrad;
+  OBS = W.obs; MEDALS = W.cfg.medals; BEST_KEY = W.cfg.bestKey; MP = W.cfg.phys;
+  best = W.best;
+  W.sky.visible = true;
+  W.peaksMesh.visible = true;
+  W.snowman.mesh.visible = !W.snowman.hit;
+  if (W.glowMesh) W.glowMesh.visible = true;
+  W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
+  // atmosphere + the skier's lights follow the mountain
+  const c = W.cfg;
+  scene.fog.color.setRGB(c.fog[0], c.fog[1], c.fog[2]);
+  scene.fog.near = c.fogNear; scene.fog.far = c.fogFar;
+  scene.background.setRGB(c.fog[0], c.fog[1], c.fog[2]);
+  sunLight.color.set(c.lightSun); sunLight.intensity = c.lightInt;
+  hemiLight.color.set(c.lightSky); hemiLight.groundColor.set(c.lightGnd);
+  // HUD statics are per mountain
+  drawProfile();
+  bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
+  // read-only static dumps for the harness track the ACTIVE mountain
+  window.__ppCourse = W.dump.course;
+  window.__ppObstacles = W.dump.obstacles;
+  window.__ppGates = W.dump.gates;
+  window.__ppShortcut = W.dump.shortcut;
+  window.__ppSnowman = W.dump.snowman;
+  window.__ppPeaks = W.dump.peaks;
+  // stale spray from the other mountain never lingers
+  for (let i = 0; i < SPRAY_N; i++) { sprayLife[i] = 0; sprayPos[i * 3 + 1] = -999; }
+  placeAtSample(2);
+}
+
+/* ═════════════════ mountain select screen ═════════════════ */
+function updateSelectCards() {
+  for (let i = 0; i < 2; i++) {
+    el('mcard' + i).className = 'mcard' + (selectSel === i ? ' sel' : '');
+    const Wd = WORLDS[MTN_ORDER[i]];
+    const b = Wd.best;
+    el('mbest' + i).textContent = b ? ('BEST ' + fmtTime(b.time)) : 'NOT YET SKIED';
+    const md = b ? medalFor(b.time, Wd.cfg.medals) : '';
+    const mel = el('mmedal' + i);
+    mel.textContent = md ? (md + ' MEDAL') : ' ';
+    mel.className = 'mmedal ' + md.toLowerCase();
+  }
+}
+function gotoSelect() {
+  state = S_SELECT;
+  setBodyState(S_SELECT);
+  const cur = MTN_ORDER.indexOf(W.cfg.id);
+  selectSel = cur >= 0 ? cur : 0;
+  updateSelectCards();
+}
 
 /* ═════════════════ camera ═════════════════ */
 const camPos = new THREE.Vector3(0, 30, -40);
@@ -49,7 +114,7 @@ function snapCameraBehind() {
   camLook.set(P.x + dx * 7.5, P.y + 1.1, P.z + dz * 7.5);
 }
 function updateCamera(dt, now) {
-  if (state === S_TITLE) {
+  if (state === S_TITLE || state === S_SELECT) {
     const t = now * 0.00006;
     const ci = 60;
     const cx = CX[ci], cz = CZ[ci], cy2 = CY[ci];
@@ -93,7 +158,7 @@ function updateCamera(dt, now) {
   }
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  skyGroup.position.copy(camPos);
+  W.sky.position.copy(camPos);
 }
 
 /* ═════════════════ skier pose + per-frame visuals ═════════════════ */
@@ -123,11 +188,18 @@ function updateSkier(dt) {
   smPitch += (targetPitch - smPitch) * Math.min(1, dt * 6);
   const targetRoll = -inp.steer * 0.40 * Math.min(1, P.v / 16) + clamp(P.latSlope, -0.8, 0.8) * 0.35;
   smRoll += (targetRoll - smRoll) * Math.min(1, dt * 7);
-  skier.rotation.y = P.heading;
-  // air trick: a full backflip over TRICK_TIME (ends exactly re-aligned)
-  skier.rotation.x = P.trickT > 0
-    ? smPitch - (1 - P.trickT / TRICK_TIME) * Math.PI * 2
-    : smPitch;
+  // air tricks: each type spins a different clean whole-group axis over
+  // TRICK_TIME (all end exactly re-aligned)
+  let ry = P.heading, rx = smPitch;
+  if (P.trickT > 0) {
+    const prog = 1 - P.trickT / TRICK_TIME;
+    if (P.trickType === TK_BACK) rx = smPitch - prog * Math.PI * 2;
+    else if (P.trickType === TK_FRONT) rx = smPitch + prog * Math.PI * 2;
+    else if (P.trickType === TK_SPIN_L) ry = P.heading + prog * Math.PI * 2;
+    else ry = P.heading - prog * Math.PI * 2;
+  }
+  skier.rotation.y = ry;
+  skier.rotation.x = rx;
   skier.rotation.z = smRoll;
 
   const hipY = 0.95 - 0.34 * poseCrouch;
@@ -158,10 +230,44 @@ function updateVisuals(dt, now) {
   updateSkier(dt);
   // tile culling by camera distance (fog hides the pop)
   const cxp = camera.position.x, czp = camera.position.z;
+  const tiles = W.tiles;
   for (let i = 0; i < tiles.length; i++) {
     const t = tiles[i];
     const ddx = t.cx - cxp, ddz = t.cz - czp;
     t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400; // 520^2
+  }
+  // NIGHT RIDGE sky life: aurora sway + one pooled shooting star. Whole-mesh
+  // transform/opacity only — geometry never touched per frame.
+  if (W.extras) {
+    const E = W.extras;
+    E.aurora.rotation.y = Math.sin(now * 0.00005) * 0.06;
+    E.aurora.material.opacity = 0.66 + 0.22 * Math.sin(now * 0.00013 + 1.3);
+    if (E.starActive > 0) {
+      E.starActive -= dt;
+      const t = clamp(1 - E.starActive / 0.8, 0, 1);
+      E.star.position.set(E.sx + E.svx * t, E.sy + E.svy * t, E.sz);
+      E.star.material.opacity = Math.sin(Math.PI * t) * 0.9;
+      if (E.starActive <= 0) {
+        E.star.visible = false;
+        E.star.material.opacity = 0;
+        E.starT = 25 + Math.random() * 15;      // next one in ~25-40 s
+      }
+    } else if (state !== S_PAUSE) {
+      E.starT -= dt;
+      if (E.starT <= 0) {
+        E.starActive = 0.8;
+        E.sx = -450 + Math.random() * 900;
+        E.sy = 390 + Math.random() * 150;
+        E.sz = 680 + Math.random() * 260;
+        E.svx = (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 150);
+        E.svy = -(110 + Math.random() * 90);
+        E.star.rotation.order = 'YXZ';
+        E.star.rotation.y = Math.atan2(E.svx, 0);
+        E.star.rotation.x = -Math.atan2(E.svy, Math.abs(E.svx));
+        E.star.position.set(E.sx, E.sy, E.sz);
+        E.star.visible = true;
+      }
+    }
   }
   sprayAttr.needsUpdate = true;
   if (snowfall) {
@@ -170,7 +276,7 @@ function updateVisuals(dt, now) {
   }
   // audio follows the sim
   if (ac) {
-    const duck = (state === S_PAUSE || state === S_TITLE) ? 0.25 : 1;
+    const duck = (state === S_PAUSE || state === S_TITLE || state === S_SELECT) ? 0.25 : 1;
     windGain.gain.value = Math.min(0.20, P.v * 0.006) * duck;
     windFilt.frequency.value = 260 + P.v * 26;
     carveGain.gain.value = (!P.air && state === S_RUN)
@@ -214,7 +320,22 @@ function updatePauseSel() {
 }
 function menuLogic(dt) {
   if (state === S_TITLE) {
-    if (edges.confirm || edges.any) { sfx.jingle(); startRun(); snapCameraBehind(); }
+    // START quick-starts the last-played mountain; anything else opens
+    // the mountain select
+    if (edges.pause) { sfx.jingle(); startRun(); snapCameraBehind(); }
+    else if (edges.confirm || edges.any) { sfx.menuMove(); gotoSelect(); }
+  } else if (state === S_SELECT) {
+    if (edges.selCard >= 0) {           // touch: tap selects, tap again confirms
+      if (edges.selCard === selectSel) edges.confirm = true;
+      else { selectSel = edges.selCard; updateSelectCards(); sfx.menuMove(); }
+    }
+    if (edges.left && selectSel !== 0) { selectSel = 0; updateSelectCards(); sfx.menuMove(); }
+    else if (edges.right && selectSel !== 1) { selectSel = 1; updateSelectCards(); sfx.menuMove(); }
+    if (edges.confirm) {
+      setMountain(MTN_ORDER[selectSel]);
+      sfx.jingle();
+      startRun(); snapCameraBehind();
+    } else if (edges.back || edges.pause) { sfx.menuMove(); gotoTitle(); }
   } else if (state === S_PAUSE) {
     if (edges.up || edges.down) { pauseSel = 1 - pauseSel; updatePauseSel(); sfx.menuMove(); }
     if (edges.pause) { state = pausedFrom; setBodyState(state); }
@@ -268,7 +389,7 @@ function frame(now) {
   gatherInput();
   menuLogic(dtReal);
   let n = 0;
-  if (state !== S_TITLE && state !== S_PAUSE) {
+  if (state !== S_TITLE && state !== S_SELECT && state !== S_PAUSE) {
     if (TURBO > 0) {
       // test mode only: the harness may retune tick rate mid-session
       n = (typeof window.__ppTurbo === 'number') ? clamp(window.__ppTurbo, 1, 30) : TURBO;
@@ -289,9 +410,29 @@ function frame(now) {
   updateHUD();
 }
 
-/* boot */
-placeAtSample(2);
-bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
+/* ═════════════════ boot ═════════════════ */
+// vista thumbnails for the select cards — rendered once from the REAL scene
+function renderVistas() {
+  for (let i = 0; i < 2; i++) {
+    setMountain(MTN_ORDER[i]);
+    const ci = 60;
+    camera.position.set(CX[ci] + 52, CY[ci] + 22, CZ[ci]);
+    camera.lookAt(CX[ci + 40], CY[ci + 40] + 4, CZ[ci + 40]);
+    camera.updateMatrixWorld();
+    W.sky.position.copy(camera.position);
+    const cxp = camera.position.x, czp = camera.position.z;
+    for (let k = 0; k < W.tiles.length; k++) {
+      const t = W.tiles[k];
+      const ddx = t.cx - cxp, ddz = t.cz - czp;
+      t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400;
+    }
+    renderer.render(scene, camera);
+    const tc = el('mthumb' + i);
+    tc.getContext('2d').drawImage(canvas, 0, 0, VW, VH, 0, 0, tc.width, tc.height);
+  }
+}
+renderVistas();
+setMountain(lastMtnId);
 gotoTitle();
 syncTelemetry();
 requestAnimationFrame(frame);

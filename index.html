@@ -137,11 +137,13 @@
     writing-mode: horizontal-tb;
   }
 
-  /* trick landing popup — skewed navy panel like the rest of the HUD */
+  /* trick landing popup — skewed navy panel like the rest of the HUD.
+     width follows the chain text ("FLIP + 360 · x2 BOOST · VARIETY!") */
   #trickPop {
-    left: 50%; top: 156px; width: 320px; height: 48px; margin-left: -160px;
+    left: 0; right: 0; margin: 0 auto; top: 156px;
+    width: max-content; min-width: 260px; height: 48px; padding: 0 28px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 23px; font-weight: 700; letter-spacing: 4px; color: #ffd23e;
+    font-size: 21px; font-weight: 700; letter-spacing: 3px; color: #ffd23e;
     opacity: 0; pointer-events: none; will-change: opacity, transform;
   }
   #trickPop.show { animation: trickpop 1.4s ease-out forwards; }
@@ -173,7 +175,7 @@
   }
 
   #hud { position: absolute; inset: 0; pointer-events: none; }
-  body.st-title #hud, body.st-finish #hud .hidefinish { display: none; }
+  body.st-title #hud, body.st-select #hud, body.st-finish #hud .hidefinish { display: none; }
 
   /* ── title screen ── */
   #title { position: absolute; inset: 0; display: none; pointer-events: none; }
@@ -215,6 +217,40 @@
     text-align: center; line-height: 1.9;
   }
 
+  /* ── mountain select ── */
+  #selectScreen {
+    position: absolute; inset: 0;
+    display: none; align-items: center; justify-content: center; gap: 60px;
+  }
+  body.st-select #selectScreen { display: flex; }
+  #selectTitle {
+    position: absolute; left: 50%; top: 58px; transform: translateX(-50%);
+    font-size: 28px; letter-spacing: 10px; font-weight: 700; color: #fff;
+    text-shadow: 0 3px 0 #20233d;
+  }
+  .mcard {
+    width: 384px; background: #20233d; border: 3px solid #12142a;
+    padding: 14px 14px 10px; text-align: center;
+    transform: skewX(-4deg); opacity: 0.68;
+  }
+  .mcard > * { transform: skewX(4deg); }
+  .mcard.sel { opacity: 1; border-color: #ffd23e; }
+  .mcard .mname {
+    font-size: 21px; font-weight: 700; letter-spacing: 5px; color: #fff;
+    margin-bottom: 10px;
+  }
+  .mcard.sel .mname { color: #ffd23e; }
+  .mcard.sel .mname::before { content: '▶ '; color: #ff5964; }
+  .mcard canvas { width: 348px; height: 196px; background: #171930; display: block; margin: 0 auto; }
+  .mcard .mbest { margin-top: 10px; font-size: 14px; font-weight: 700; letter-spacing: 2px; color: #e8ecff; }
+  .mmedal { margin-top: 2px; height: 18px; font-size: 13px; font-weight: 700; letter-spacing: 3px; color: #9aa0c0; }
+  .mmedal.gold { color: #ffd23e; } .mmedal.silver { color: #d8dce8; } .mmedal.bronze { color: #e8945a; }
+  #selectHint {
+    position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 2px; color: #e8ecff;
+    text-shadow: 0 1px 0 #20233d; white-space: nowrap;
+  }
+
   /* ── countdown ── */
   #countdownEl {
     position: absolute; left: 0; right: 0; top: 240px;
@@ -244,6 +280,7 @@
   }
   .mitem.sel { color: #ffd23e; background: #171930; }
   .mitem.sel::before { content: '▶ '; color: #ff5964; }
+  #pauseHint { margin-top: 18px; font-size: 12px; letter-spacing: 2px; color: #9aa0c0; }
 
   /* ── finish ── */
   #finishScreen {
@@ -278,7 +315,7 @@
   /* ── touch controls (touch input source only) ── */
   #touchUI { position: absolute; inset: 0; display: none; pointer-events: none; }
   body.input-touch #touchUI { display: block; }
-  body.st-title #touchUI, body.st-finish #touchUI { display: none; }
+  body.st-title #touchUI, body.st-select #touchUI, body.st-finish #touchUI { display: none; }
   .tzone { position: absolute; top: 0; bottom: 0; width: 50%; pointer-events: auto; }
   #tzoneL { left: 0; } #tzoneR { right: 0; }
   .tbtn {
@@ -348,7 +385,24 @@
     </div>
     <div id="pressStart">PRESS ✕ TO SKI</div>
     <div id="titleBest"></div>
-    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · ▢ JUMP + AIR TRICK · HOLD ○ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE · SPACE JUMP / TRICK</div>
+    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · ▢ JUMP · ▢+STICK AIR TRICKS · HOLD ○ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE · SPACE JUMP / +ARROWS TRICKS</div>
+  </div>
+
+  <div id="selectScreen">
+    <div id="selectTitle">CHOOSE YOUR MOUNTAIN</div>
+    <div class="mcard sel" id="mcard0">
+      <div class="mname">ALPENGLOW</div>
+      <canvas id="mthumb0" width="348" height="196"></canvas>
+      <div class="mbest" id="mbest0"></div>
+      <div class="mmedal" id="mmedal0"></div>
+    </div>
+    <div class="mcard" id="mcard1">
+      <div class="mname">NIGHT RIDGE</div>
+      <canvas id="mthumb1" width="348" height="196"></canvas>
+      <div class="mbest" id="mbest1"></div>
+      <div class="mmedal" id="mmedal1"></div>
+    </div>
+    <div id="selectHint">◄ ► CHOOSE · ✕ SKI · ○ BACK</div>
   </div>
 
   <div id="countdownEl"></div>
@@ -358,6 +412,7 @@
       <h2>PAUSED</h2>
       <div class="mitem" id="mi0">RESUME</div>
       <div class="mitem" id="mi1">RESTART RUN</div>
+      <div id="pauseHint">IN AIR: ▢ + STICK = TRICKS</div>
     </div>
   </div>
 
@@ -395,7 +450,7 @@
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
    POWDER PEAK — a Stephens Arcade downhill time trial.
-   3D third-person skiing, one authored mountain, flat-shaded low-poly.
+   3D third-person skiing, TWO authored mountains, flat-shaded low-poly.
    Pi 5 target: 1280x720@60. Everything below is built in code — no assets.
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
@@ -404,7 +459,6 @@
 /* ───────────────────────── config / flags ───────────────────────── */
 const VW = 1280, VH = 720;
 const DT = 1 / 60;
-const SEED = 20260802;
 
 const QS = new URLSearchParams(location.search);
 // Console low-fx mode: launcher passes ?fx=low once, then it persists.
@@ -418,20 +472,14 @@ try {
 // play the whole course fast. Same sim, same input path — just more ticks.
 const TURBO = Math.min(30, Math.max(0, parseInt(QS.get('turbo') || '0', 10) || 0));
 
-const BEST_KEY = 'powderpeak_best';
-// Medal thresholds (seconds) vs the authored run. Recalibrated against the
-// verification bot after the tuck retune (same gold:silver:bronze ratios).
-const MEDALS = { gold: 93, silver: 110, bronze: 140 };
-
-/* speed + air tuning */
-const CD_RUN = 0.0042;        // upright air drag
-const CD_TUCK = 0.0018;       // tucked air drag (was 0.0020 — more top end)
-const TUCK_ACCEL = 0.9;       // m/s^2 push while tucked: tuck bites instantly
-const HOP_VY = 3.0;           // ground hop impulse (west button)
-const RAMP_JUMP_VY = [4.0, 9.5, 0.26]; // min, max, v-scale for a timed ramp jump
-const TRICK_TIME = 0.5;       // seconds of spin per trick
-const TRICK_BOOST = 0.08;     // +8% speed per completed trick on landing
-const VMAX_BOOST = 48;        // landing-boost speed cap (m/s)
+const MTN_KEY = 'powderpeak_mtn';       // last-played mountain id
+const HOP_VY = 3.0;                     // ground hop impulse (west button)
+const RAMP_JUMP_VY = [4.0, 9.5, 0.26];  // min, max, v-scale for a timed ramp jump
+const TRICK_TIME = 0.5;                 // seconds of spin per trick
+const VMAX_BOOST = 48;                  // landing-boost speed cap (m/s)
+// trick chain: 1st completed trick +8%, each additional +6%, all-distinct
+// airs earn +4% VARIETY — total capped, aligned-landing +6% stacks after
+const CHAIN_FIRST = 8, CHAIN_MORE = 6, CHAIN_VARIETY = 4, CHAIN_CAP = 24;
 
 /* ───────────────────────── tiny math utils ───────────────────────── */
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -447,255 +495,455 @@ function mulberry32(seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-const rng = mulberry32(SEED);
-
 // 2D value noise (seeded, deterministic) — terrain lumps, tree density.
-function hash2(ix, iz) {
-  let n = (ix * 374761393 + iz * 668265263 + SEED * 69069) | 0;
-  n = Math.imul(n ^ (n >>> 13), 1274126177);
-  return (((n ^ (n >>> 16)) >>> 0) / 4294967295) * 2 - 1;
-}
-function vnoise(x, z) {
-  const ix = Math.floor(x), iz = Math.floor(z);
-  const fx = x - ix, fz = z - iz;
-  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
-  const a = hash2(ix, iz), b = hash2(ix + 1, iz);
-  const c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
-  return lerp(lerp(a, b, sx), lerp(c, d, sx), sz);
-}
-function noise2(x, z) { // two octaves is plenty for snow
-  return vnoise(x, z) + 0.5 * vnoise(x * 2.13 + 7.3, z * 2.13 - 3.1);
+function makeNoise(SEED) {
+  function hash2(ix, iz) {
+    let n = (ix * 374761393 + iz * 668265263 + SEED * 69069) | 0;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return (((n ^ (n >>> 16)) >>> 0) / 4294967295) * 2 - 1;
+  }
+  function vnoise(x, z) {
+    const ix = Math.floor(x), iz = Math.floor(z);
+    const fx = x - ix, fz = z - iz;
+    const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+    const a = hash2(ix, iz), b = hash2(ix + 1, iz);
+    const c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+    return lerp(lerp(a, b, sx), lerp(c, d, sx), sz);
+  }
+  function noise2(x, z) { // two octaves is plenty for snow
+    return vnoise(x, z) + 0.5 * vnoise(x * 2.13 + 7.3, z * 2.13 - 3.1);
+  }
+  return { hash2, noise2 };
 }
 
-/* ───────────────────────── course definition ─────────────────────────
+/* ───────────────────────── course recipes ─────────────────────────
    A winding piste descending the mountain. Authored as segments:
    len (m), hdg = heading at segment END (deg, + = right of fall line),
    grade (drop per meter), w (piste half-width m), style, flags.        */
 const ST_OPEN = 0, ST_SLALOM = 1, ST_HAIRPIN = 2, ST_RIDGE = 3;
-const SEGS = [];
-function S(len, hdg, grade, w, style, flags) {
-  SEGS.push({ len, hdg, grade, w, style: style || ST_OPEN,
-              ramp: !!(flags && flags.ramp), gate: !!(flags && flags.gate) });
-}
-function slalomRun(count, period, amp, grade, w) {
-  let a = -amp;
-  for (let i = 0; i < count; i++) { S(period, a, grade, w, ST_SLALOM); a = -a; }
-}
-/* summit plateau → fast sweepers → ramp → slalom woods → hairpins →
-   ridge traverse over the canyon → final schuss → finish meadow */
-S(60, 0, .13, 12);                       // start ramp out of the gate
-S(120, 33, .21, 11);                     // fast sweepers
-S(120, -30, .23, 11);
-S(70, -30, .19, 10, ST_OPEN, { ramp: 1 });   // RAMP 1
-S(80, 0, .16, 10, ST_OPEN, { gate: 1 });     // GATE 1 at end
-S(45, 24, .12, 8.5, ST_SLALOM);          // into the woods
-slalomRun(6, 33, 26, .12, 8);
-S(65, 66, .13, 9);                       // traverse right…
-S(58, -62, .10, 9, ST_HAIRPIN);          // HAIRPIN 1 (chevrons)
-S(112, -20, .21, 10, ST_OPEN, { gate: 1 }); // GATE 2
-S(65, -4, .24, 11, ST_OPEN, { ramp: 1 });   // RAMP 2
-S(65, 16, .22, 11);
-slalomRun(6, 26, 30, .13, 7.5);          // tighter woods
-S(72, -73, .15, 9, ST_RIDGE);            // canyon rim (fence!)
-S(66, 95, .09, 9, ST_HAIRPIN);           // HAIRPIN 2 — full switchback
-S(90, 40, .20, 10, ST_RIDGE);
-S(120, -12, .22, 11, ST_OPEN, { ramp: 1, gate: 1 }); // RAMP 3, GATE 3
-slalomRun(5, 31, 22, .14, 8);            // boulder garden slalom
-S(60, 55, .12, 9);
-S(52, -58, .09, 9, ST_HAIRPIN);          // HAIRPIN 3
-S(130, -4, .26, 12, ST_OPEN, { ramp: 1 });  // RAMP 4 — the schuss
-S(115, 4, .21, 13);                      // FINISH at end of this one
-S(70, 0, .05, 14);                       // runout meadow
-
-/* ── integrate segments into dense samples every 3 m ── */
-const STEP = 3;
-let COURSE_LEN = 0;
-for (const sg of SEGS) COURSE_LEN += sg.len;
-const NS = Math.floor(COURSE_LEN / STEP) + 1;
-// struct-of-arrays: hot path (terrain queries) reads these constantly
-const CX = new Float32Array(NS), CZ = new Float32Array(NS), CY = new Float32Array(NS);
-const CDX = new Float32Array(NS), CDZ = new Float32Array(NS);   // travel dir
-const CRX = new Float32Array(NS), CRZ = new Float32Array(NS);   // right vector
-const CCURV = new Float32Array(NS), CW = new Float32Array(NS);
-const CBANK = new Float32Array(NS), CRAMP = new Float32Array(NS);
-const CWL = new Float32Array(NS), CWR = new Float32Array(NS);   // wall slopes
-const CSTYLE = new Uint8Array(NS);
-const GATES = [];           // sample indices of checkpoint gates (3 of them)
-const RAMPS = [];           // sample indices of ramp lips
-let FINISH_I = NS - 1;      // finish-line sample index
-
-(function buildCourse() {
-  let x = 0, z = 0, y = 0, hdg = 0, s = 0, i = 0;
-  let grade = SEGS[0].grade, wl = 0.55, wr = 0.55, wsm = SEGS[0].w;
-  let segStartHdg = 0;
-  let seg = 0, segS = 0;
-  const D2R = Math.PI / 180;
-  while (i < NS && seg < SEGS.length) {
-    const sg = SEGS[seg];
-    const t = smoothstep(segS / sg.len);
-    const targetHdg = lerp(segStartHdg, sg.hdg, t);
-    const prevHdg = hdg;
-    hdg = targetHdg;
-    const phi = hdg * D2R;
-    const dx = Math.sin(phi), dz = Math.cos(phi);
-    // smooth grade + side-wall style toward this segment's values
-    grade += (sg.grade - grade) * (STEP / 22);
-    wsm += (sg.w - wsm) * (STEP / 16);
-    let twl, twr;
-    if (sg.style === ST_RIDGE) { twl = -0.85; twr = 0.80; }
-    else if (sg.style === ST_HAIRPIN) {
-      // outer wall high, inner drops gently away
-      const right = sg.hdg > segStartHdg;
-      twl = right ? 0.95 : 0.22; twr = right ? 0.22 : 0.95;
-    }
-    else if (sg.style === ST_SLALOM) { twl = 0.34; twr = 0.34; }
-    else { twl = 0.55; twr = 0.55; }
-    wl += (twl - wl) * (STEP / 18);
-    wr += (twr - wr) * (STEP / 18);
-
-    CX[i] = x; CZ[i] = z;
-    // gentle rollers on the open sections make the piste feel alive
-    const roll = (sg.style === ST_OPEN ? 0.55 : 0.15) *
-      (Math.sin(s * 0.105) + 0.6 * Math.sin(s * 0.041 + 2.0));
-    CY[i] = y + roll;
-    CDX[i] = dx; CDZ[i] = dz;
-    CRX[i] = dz; CRZ[i] = -dx;
-    const curv = ((hdg - prevHdg) * D2R) / STEP;
-    CCURV[i] = curv;
-    CW[i] = wsm;
-    CBANK[i] = clamp(curv * 7, -0.32, 0.32);
-    CWL[i] = wl; CWR[i] = wr;
-    CSTYLE[i] = sg.style;
-
-    x += dx * STEP; z += dz * STEP; y -= grade * STEP;
-    s += STEP; segS += STEP;
-    i++;
-    if (segS >= sg.len) {
-      if (sg.gate) GATES.push(i - 1);
-      if (sg.ramp) RAMPS.push(i - 2);
-      if (seg === SEGS.length - 2) FINISH_I = i - 1;
-      segS -= sg.len; segStartHdg = sg.hdg; seg++;
-    }
-  }
-  // smooth centreline height a touch (kills any integration kinks)
-  for (let p = 0; p < 2; p++) {
-    for (let j = 1; j < NS - 1; j++) CY[j] = (CY[j - 1] + CY[j] * 2 + CY[j + 1]) * 0.25;
-  }
-  // bake ramp kickers: 16 m cubic rise to a 2.3 m lip, then terrain drops
-  for (const li of RAMPS) {
-    for (let j = 0; j <= Math.floor(16 / STEP); j++) {
-      const idx = li - Math.floor(16 / STEP) + j;
-      if (idx < 0 || idx >= NS) continue;
-      const t = (idx - (li - 16 / STEP)) / (16 / STEP);
-      CRAMP[idx] = 2.3 * t * t * t;
-    }
-  }
-})();
-
-/* ───────────────── spatial hash over course samples (CSR) ───────────────── */
-const HCELL = 16;
-let HX0 = 1e9, HZ0 = 1e9, HX1 = -1e9, HZ1 = -1e9;
-for (let i = 0; i < NS; i++) {
-  if (CX[i] < HX0) HX0 = CX[i]; if (CX[i] > HX1) HX1 = CX[i];
-  if (CZ[i] < HZ0) HZ0 = CZ[i]; if (CZ[i] > HZ1) HZ1 = CZ[i];
-}
-HX0 -= 96; HZ0 -= 96; HX1 += 96; HZ1 += 96;
-const HW = Math.ceil((HX1 - HX0) / HCELL), HH = Math.ceil((HZ1 - HZ0) / HCELL);
-const hashStart = new Int32Array(HW * HH + 1);
-let hashItems;
-(function buildHash() {
-  const counts = new Int32Array(HW * HH);
-  const cellOf = i => {
-    const cx = Math.floor((CX[i] - HX0) / HCELL), cz = Math.floor((CZ[i] - HZ0) / HCELL);
-    return cz * HW + cx;
+function segList() {
+  const SEGS = [];
+  const S = (len, hdg, grade, w, style, flags) => {
+    SEGS.push({ len, hdg, grade, w, style: style || ST_OPEN,
+      ramp: !!(flags && flags.ramp), gate: !!(flags && flags.gate),
+      scut: !!(flags && flags.scut) });
   };
-  for (let i = 0; i < NS; i++) counts[cellOf(i)]++;
-  let acc = 0;
-  for (let c = 0; c < HW * HH; c++) { hashStart[c] = acc; acc += counts[c]; }
-  hashStart[HW * HH] = acc;
-  hashItems = new Int32Array(acc);
-  const cursor = hashStart.slice(0, HW * HH);
-  for (let i = 0; i < NS; i++) { const c = cellOf(i); hashItems[cursor[c]++] = i; }
-})();
-
-/* ─────────────────────── terrain height function ───────────────────────
-   THE ground truth. Both the visual mesh and the physics sample this, so
-   the skier is always exactly on the snow you see. Height at (x,z) is a
-   blend of nearby course samples' cross-profiles, weighted by an
-   elliptical distance (tight along-track, wide laterally) so hairpin legs
-   blend into each other naturally without disturbing the piste itself.  */
-const R_LAT = 76;           // lateral influence reach (m)
-const ALONG = 4;            // along-track distance is scaled 4x tighter
-
-// per-sample cross-profile: piste (banked, flat) → berm → walls/cliff
-function profileY(j, u, nA, nB) {
-  const w = CW[j];
-  const au = u < 0 ? -u : u;
-  let y = CY[j];
-  // ramp kicker (fades out laterally so you can skirt around it)
-  if (CRAMP[j] > 0 && au < 5.2) {
-    const t = au < 3.4 ? 1 : (5.2 - au) / 1.8;
-    y += CRAMP[j] * (t * t * (3 - 2 * t));
-  }
-  if (au <= w) return y - CBANK[j] * u;
-  const du = au - w;
-  y -= CBANK[j] * (u < 0 ? -w : w);
-  const ws = u < 0 ? CWL[j] : CWR[j];
-  if (ws >= 0) {
-    y += ws * du + 0.012 * du * du;
-  } else {
-    // cliff: drop to a canyon floor, then the far wall rises again
-    y += Math.max(ws * du, -13);
-    if (du > 30) y += 0.5 * (du - 30);
-  }
-  // lumpy deep snow off the groomed line
-  const env = du < 7 ? du / 7 : 1;
-  y += env * (nA * 1.7 + nB * 3.1);
-  return y;
+  const slalomRun = (count, period, amp, grade, w, scut) => {
+    let a = -amp;
+    for (let i = 0; i < count; i++) { S(period, a, grade, w, ST_SLALOM, { scut }); a = -a; }
+  };
+  return { SEGS, S, slalomRun };
+}
+/* ALPENGLOW — the original mountain. summit plateau → fast sweepers →
+   ramp → slalom woods → hairpins → ridge traverse over the canyon →
+   final schuss → finish meadow. UNCHANGED geometry.                  */
+function segsAlpenglow() {
+  const { SEGS, S, slalomRun } = segList();
+  S(60, 0, .13, 12);                       // start ramp out of the gate
+  S(120, 33, .21, 11);                     // fast sweepers
+  S(120, -30, .23, 11);
+  S(70, -30, .19, 10, ST_OPEN, { ramp: 1 });   // RAMP 1
+  S(80, 0, .16, 10, ST_OPEN, { gate: 1 });     // GATE 1 at end
+  S(45, 24, .12, 8.5, ST_SLALOM);          // into the woods
+  slalomRun(6, 33, 26, .12, 8);
+  S(65, 66, .13, 9);                       // traverse right…
+  S(58, -62, .10, 9, ST_HAIRPIN);          // HAIRPIN 1 (chevrons)
+  S(112, -20, .21, 10, ST_OPEN, { gate: 1 }); // GATE 2
+  S(65, -4, .24, 11, ST_OPEN, { ramp: 1 });   // RAMP 2
+  S(65, 16, .22, 11);
+  slalomRun(6, 26, 30, .13, 7.5, 1);       // tighter woods — HIDDEN SHORTCUT
+  S(72, -73, .15, 9, ST_RIDGE);            // canyon rim (fence!)
+  S(66, 95, .09, 9, ST_HAIRPIN);           // HAIRPIN 2 — full switchback
+  S(90, 40, .20, 10, ST_RIDGE);
+  S(120, -12, .22, 11, ST_OPEN, { ramp: 1, gate: 1 }); // RAMP 3, GATE 3
+  slalomRun(5, 31, 22, .14, 8);            // boulder garden slalom
+  S(60, 55, .12, 9);
+  S(52, -58, .09, 9, ST_HAIRPIN);          // HAIRPIN 3
+  S(130, -4, .26, 12, ST_OPEN, { ramp: 1 });  // RAMP 4 — the schuss
+  S(115, 4, .21, 13);                      // FINISH at end of this one
+  S(70, 0, .05, 14);                       // runout meadow
+  return SEGS;
+}
+/* NIGHT RIDGE — icier, narrower, a touch meaner. ~1.9 km, 4 sectors,
+   3 gates, 4 ramps. moonlit dusk palette.                            */
+function segsNightRidge() {
+  const { SEGS, S, slalomRun } = segList();
+  S(70, 0, .15, 10);                       // out of the gate under the moon
+  S(130, -35, .22, 10);                    // fast frozen sweepers
+  S(120, 30, .24, 10);
+  S(60, 30, .18, 9, ST_OPEN, { ramp: 1 });    // RAMP 1
+  S(90, 0, .17, 9, ST_OPEN, { gate: 1 });     // GATE 1
+  S(50, -26, .13, 8, ST_SLALOM);           // into the black pines
+  slalomRun(5, 30, 28, .13, 7.5);
+  S(70, -70, .12, 8, ST_RIDGE);            // rim traverse
+  S(60, 85, .09, 8, ST_HAIRPIN);           // HAIRPIN 1 — switchback
+  S(100, 30, .21, 9, ST_OPEN, { ramp: 1 });   // RAMP 2
+  S(90, -5, .22, 9, ST_OPEN, { gate: 1 });    // GATE 2
+  slalomRun(6, 28, 30, .13, 7, 1);         // deep woods — HIDDEN SHORTCUT
+  S(60, -60, .11, 8, ST_HAIRPIN);          // HAIRPIN 2
+  S(90, -20, .23, 9, ST_RIDGE);            // rim again
+  S(110, 8, .22, 10, ST_OPEN, { ramp: 1, gate: 1 }); // RAMP 3, GATE 3
+  slalomRun(4, 30, 24, .14, 7.5);          // frozen boulder garden
+  S(55, -50, .10, 8, ST_HAIRPIN);          // HAIRPIN 3
+  S(140, -2, .27, 11, ST_OPEN, { ramp: 1 }); // RAMP 4 — the midnight schuss
+  S(110, 3, .22, 12);                      // FINISH at end of this one
+  S(70, 0, .05, 13);                       // runout
+  return SEGS;
 }
 
-// scratch result of terrainInfo — reused, never allocated per call
-const TI = { h: 0, i: 0, u: 0, d: 1e9 };
-function terrainInfo(x, z) {
-  const nA = noise2(x * 0.09, z * 0.09);
-  const nB = noise2(x * 0.021 + 31.7, z * 0.021 - 12.9);
-  const cx0 = Math.max(0, Math.floor((x - R_LAT - HX0) / HCELL));
-  const cx1 = Math.min(HW - 1, Math.floor((x + R_LAT - HX0) / HCELL));
-  const cz0 = Math.max(0, Math.floor((z - R_LAT - HZ0) / HCELL));
-  const cz1 = Math.min(HH - 1, Math.floor((z + R_LAT - HZ0) / HCELL));
-  let sw = 0, sy = 0, best = -1, bestD = 1e9, bestU = 0;
-  for (let cz = cz0; cz <= cz1; cz++) {
-    for (let cx = cx0; cx <= cx1; cx++) {
-      const c = cz * HW + cx;
-      for (let k = hashStart[c]; k < hashStart[c + 1]; k++) {
-        const j = hashItems[k];
-        const ddx = x - CX[j], ddz = z - CZ[j];
-        const a = ddx * CDX[j] + ddz * CDZ[j];
-        const u = ddx * CRX[j] + ddz * CRZ[j];
-        const de = Math.sqrt(ALONG * ALONG * a * a + u * u);
-        if (de >= R_LAT) continue;
-        let wgt = 1 - de / R_LAT;
-        wgt = wgt * wgt; wgt = wgt * wgt * wgt;      // ^6: nearest dominates
-        sw += wgt; sy += wgt * profileY(j, u, nA, nB);
-        if (de < bestD) { bestD = de; best = j; bestU = u; }
+/* ───────────────────── the two mountains ─────────────────────
+   Physics per mountain: NIGHT RIDGE is icier — less carve scrub,
+   less tuck drag (higher top end), slightly weaker brake bite.   */
+const MTN = {
+  alp: {
+    id: 'alp', name: 'ALPENGLOW', seed: 20260802,
+    bestKey: 'powderpeak_best',
+    medals: { gold: 93, silver: 110, bronze: 140 },
+    origin: { x: 0, z: 0 },
+    segs: segsAlpenglow(),
+    night: false,
+    phys: { cdRun: 0.0042, cdTuck: 0.0018, tuckAccel: 0.9, carve: 0.034, brake: 4.4 },
+    sc: { side: 1, off: 20, w: 4.0 },        // hidden shortcut corridor
+    smSide: 1,                                // snowman side of the schuss
+    fog: [0.949, 0.694, 0.651], fogNear: 80, fogFar: 380,
+    skyStops: [
+      [-1.0, 0.98, 0.73, 0.60], [0.0, 1.00, 0.80, 0.62], [0.06, 0.98, 0.67, 0.63],
+      [0.20, 0.84, 0.64, 0.78], [0.5, 0.55, 0.62, 0.90], [1.0, 0.40, 0.51, 0.86],
+    ],
+    sunDir: [-0.66, 0.15, -0.70], sunR: 52, sunCol: 0xfff3cc,
+    haloR: 150, haloCol: 0xffc890, haloOp: 0.30,
+    cloudCol: [0.99, 0.90, 0.92],
+    peakCol: [0.90, 0.90, 1.0],
+    lightSun: 0xffd9b0, lightSky: 0xb8c4ff, lightGnd: 0xfff0e8, lightInt: 1.0,
+  },
+  nr: {
+    id: 'nr', name: 'NIGHT RIDGE', seed: 20260808,
+    bestKey: 'powderpeak_best_nr',
+    // calibrated from the harness race bot (94.28s clean → bot ≈ 20% over
+    // gold; silver = gold x1.18, bronze = gold x1.50, whole seconds)
+    medals: { gold: 79, silver: 93, bronze: 119 },
+    origin: { x: 12000, z: 0 },
+    segs: segsNightRidge(),
+    night: true,
+    phys: { cdRun: 0.0040, cdTuck: 0.00155, tuckAccel: 0.95, carve: 0.026, brake: 4.0 },
+    sc: { side: -1, off: 20, w: 4.0 },
+    smSide: -1,
+    fog: [0.10, 0.13, 0.27], fogNear: 78, fogFar: 370,
+    skyStops: [
+      [-1.0, 0.09, 0.11, 0.24], [0.0, 0.21, 0.24, 0.44], [0.05, 0.13, 0.16, 0.36],
+      [0.22, 0.07, 0.09, 0.26], [0.5, 0.035, 0.05, 0.17], [1.0, 0.015, 0.025, 0.10],
+    ],
+    sunDir: [0.45, 0.42, -0.62], sunR: 34, sunCol: 0xeef4ff,   // the moon
+    haloR: 95, haloCol: 0x9fb2e8, haloOp: 0.22,
+    cloudCol: [0.42, 0.47, 0.68],
+    peakCol: [0.52, 0.57, 0.85],
+    lightSun: 0xbfd0ff, lightSky: 0x8090d8, lightGnd: 0x2a3060, lightInt: 0.9,
+  },
+};
+
+/* ─────────── baked-light shading, one flavor per mountain ─────────── */
+// ALPENGLOW: cool violet shadows → warm peach light
+const SUNX = -0.601, SUNY = 0.451, SUNZ = -0.661;
+function shadeAlp(nx, ny, nz, r, g, b, out, o) {
+  let d = nx * SUNX + ny * SUNY + nz * SUNZ;
+  if (d < 0) d = 0;
+  const l = 0.52 + 0.58 * d;
+  out[o] = Math.min(1, r * l * (0.80 + 0.33 * d));
+  out[o + 1] = Math.min(1, g * l * (0.86 + 0.14 * d));
+  out[o + 2] = Math.min(1, b * l * (1.14 - 0.26 * d));
+}
+// NIGHT RIDGE: cold moonlight — deep indigo shadows, silver-blue light
+const MX = 0.45, MY = 0.66, MZ = -0.60;
+function shadeNight(nx, ny, nz, r, g, b, out, o) {
+  let d = nx * MX + ny * MY + nz * MZ;
+  if (d < 0) d = 0;
+  const l = 0.40 + 0.44 * d;
+  out[o] = Math.min(1, r * l * (0.56 + 0.18 * d));
+  out[o + 1] = Math.min(1, g * l * (0.64 + 0.20 * d));
+  out[o + 2] = Math.min(1, b * l * (1.02 + 0.22 * d));
+}
+// emissive-look bake: ignores the sun entirely (lanterns, gold trim, glows)
+function shadeFlat(nx, ny, nz, r, g, b, out, o) {
+  const f = 0.82 + 0.20 * Math.max(0, ny);
+  out[o] = Math.min(1, r * f); out[o + 1] = Math.min(1, g * f); out[o + 2] = Math.min(1, b * f);
+}
+MTN.alp.shade = shadeAlp;
+MTN.nr.shade = shadeNight;
+
+/* ═══════════════ buildCourseData(cfg) — everything data-side ═══════════════
+   Integrates the segment recipe into dense samples, carves the hidden
+   shortcut corridor (appended samples NSM..NS-1), builds the spatial hash
+   and the terrain height closures. Returns the world data object.          */
+function buildCourseData(cfg) {
+  const SEGS = cfg.segs;
+  const STEP = 3;
+  const { hash2, noise2 } = makeNoise(cfg.seed);
+  let COURSE_LEN = 0;
+  for (const sg of SEGS) COURSE_LEN += sg.len;
+  const NSM = Math.floor(COURSE_LEN / STEP) + 1;   // main-line sample count
+
+  /* first pass: integrate the main line into temp arrays */
+  const mCX = new Float64Array(NSM), mCZ = new Float64Array(NSM), mCY = new Float64Array(NSM);
+  const mDX = new Float64Array(NSM), mDZ = new Float64Array(NSM);
+  const mCURV = new Float64Array(NSM), mW = new Float64Array(NSM);
+  const mBANK = new Float64Array(NSM), mWL = new Float64Array(NSM), mWR = new Float64Array(NSM);
+  const mSTYLE = new Uint8Array(NSM), mRAMP = new Float64Array(NSM);
+  const GATES = [], RAMPS = [];
+  let FINISH_I = NSM - 1;
+  let scStart = -1, scEnd = -1;
+  {
+    let x = cfg.origin.x, z = cfg.origin.z, y = 0, hdg = 0, s = 0, i = 0;
+    let grade = SEGS[0].grade, wl = 0.55, wr = 0.55, wsm = SEGS[0].w;
+    let segStartHdg = 0;
+    let seg = 0, segS = 0;
+    const D2R = Math.PI / 180;
+    while (i < NSM && seg < SEGS.length) {
+      const sg = SEGS[seg];
+      const t = smoothstep(segS / sg.len);
+      const targetHdg = lerp(segStartHdg, sg.hdg, t);
+      const prevHdg = hdg;
+      hdg = targetHdg;
+      const phi = hdg * D2R;
+      const dx = Math.sin(phi), dz = Math.cos(phi);
+      grade += (sg.grade - grade) * (STEP / 22);
+      wsm += (sg.w - wsm) * (STEP / 16);
+      let twl, twr;
+      if (sg.style === ST_RIDGE) { twl = -0.85; twr = 0.80; }
+      else if (sg.style === ST_HAIRPIN) {
+        const right = sg.hdg > segStartHdg;
+        twl = right ? 0.95 : 0.22; twr = right ? 0.22 : 0.95;
+      }
+      else if (sg.style === ST_SLALOM) { twl = 0.34; twr = 0.34; }
+      else { twl = 0.55; twr = 0.55; }
+      wl += (twl - wl) * (STEP / 18);
+      wr += (twr - wr) * (STEP / 18);
+
+      mCX[i] = x; mCZ[i] = z;
+      const roll = (sg.style === ST_OPEN ? 0.55 : 0.15) *
+        (Math.sin(s * 0.105) + 0.6 * Math.sin(s * 0.041 + 2.0));
+      mCY[i] = y + roll;
+      mDX[i] = dx; mDZ[i] = dz;
+      mCURV[i] = ((hdg - prevHdg) * D2R) / STEP;
+      mW[i] = wsm;
+      mBANK[i] = clamp(mCURV[i] * 7, -0.32, 0.32);
+      mWL[i] = wl; mWR[i] = wr;
+      mSTYLE[i] = sg.style;
+      if (sg.scut) { if (scStart < 0) scStart = i; scEnd = i; }
+
+      x += dx * STEP; z += dz * STEP; y -= grade * STEP;
+      s += STEP; segS += STEP;
+      i++;
+      if (segS >= sg.len) {
+        if (sg.gate) GATES.push(i - 1);
+        if (sg.ramp) RAMPS.push(i - 2);
+        if (seg === SEGS.length - 2) FINISH_I = i - 1;
+        segS -= sg.len; segStartHdg = sg.hdg; seg++;
+      }
+    }
+    // smooth centreline height a touch (kills any integration kinks)
+    for (let p = 0; p < 2; p++) {
+      for (let j = 1; j < NSM - 1; j++) mCY[j] = (mCY[j - 1] + mCY[j] * 2 + mCY[j + 1]) * 0.25;
+    }
+    // bake ramp kickers: 16 m cubic rise to a 2.3 m lip
+    for (const li of RAMPS) {
+      for (let j = 0; j <= Math.floor(16 / STEP); j++) {
+        const idx = li - Math.floor(16 / STEP) + j;
+        if (idx < 0 || idx >= NSM) continue;
+        const t = (idx - (li - 16 / STEP)) / (16 / STEP);
+        mRAMP[idx] = 2.3 * t * t * t;
       }
     }
   }
-  if (sw > 0) { TI.h = sy / sw; TI.i = best; TI.u = bestU; TI.d = bestD; }
-  else { TI.h = 500; TI.i = -1; TI.u = 0; TI.d = 1e9; }
-  return TI;
-}
-function terrainH(x, z) { return terrainInfo(x, z).h; }
 
-// slope gradient (numeric) — physics pulls the skier down this
-const GRAD = { x: 0, z: 0 };
-function terrainGrad(x, z) {
-  const e = 1.4;
-  const hx1 = terrainH(x + e, z), hx0 = terrainH(x - e, z);
-  const hz1 = terrainH(x, z + e), hz0 = terrainH(x, z - e);
-  GRAD.x = (hx1 - hx0) / (2 * e);
-  GRAD.z = (hz1 - hz0) / (2 * e);
-  return GRAD;
+  /* ── carve the HIDDEN SHORTCUT: a straightish tree corridor cutting the
+        marked slalom, rejoining faster if skied clean. Appended samples get
+        their own tighter terrain-blend reach so the main piste stays put. ── */
+  let SC = null;
+  let scPts = [];
+  if (scStart >= 0 && cfg.sc) {
+    const entryI = Math.max(4, scStart - 10);
+    const exitI = Math.min(NSM - 4, scEnd + 10);
+    const Ax = mCX[entryI], Az = mCZ[entryI];
+    const Dx = mCX[exitI], Dz = mCZ[exitI];
+    const chx = Dx - Ax, chz = Dz - Az;
+    const chL = Math.hypot(chx, chz);
+    const pxn = chz / chL * cfg.sc.side, pzn = -chx / chL * cfg.sc.side; // offset dir
+    const M = Math.max(8, Math.round(chL / STEP) + 1);
+    for (let k = 0; k < M; k++) {
+      const t = k / (M - 1);
+      const bulge = cfg.sc.off * Math.pow(Math.sin(Math.PI * t), 0.9);
+      scPts.push({
+        x: Ax + chx * t + pxn * bulge,
+        z: Az + chz * t + pzn * bulge,
+        y: lerp(mCY[entryI], mCY[exitI], t),
+      });
+    }
+    // the slalom's mean path wanders relative to the chord, so push the
+    // corridor OUT until its midline truly clears the groomed piste
+    // (eased near entry/exit, then smoothed so the carve stays gentle)
+    for (let iter = 0; iter < 3; iter++) {
+      for (let k = 1; k < M - 1; k++) {
+        const t = k / (M - 1);
+        const p = scPts[k];
+        let bd = 1e18, bi = entryI;
+        for (let i = Math.max(0, entryI - 20); i <= Math.min(NSM - 1, exitI + 20); i++) {
+          const d = (mCX[i] - p.x) * (mCX[i] - p.x) + (mCZ[i] - p.z) * (mCZ[i] - p.z);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        const d = Math.sqrt(bd);
+        const need = (mW[bi] + 4.5) * Math.min(1, Math.min(t, 1 - t) * 6);
+        if (d < need && d > 0.01) {
+          const push = (need - d) * 0.7;
+          let ux = (p.x - mCX[bi]) / d, uz = (p.z - mCZ[bi]) / d;
+          if (d < 0.5) { ux = pxn; uz = pzn; }   // degenerate: push offset-side
+          p.x += ux * push; p.z += uz * push;
+        }
+      }
+      for (let k = 1; k < M - 1; k++) {          // 1-2-1 smoothing pass
+        scPts[k].x = (scPts[k - 1].x + scPts[k].x * 2 + scPts[k + 1].x) * 0.25;
+        scPts[k].z = (scPts[k - 1].z + scPts[k].z * 2 + scPts[k + 1].z) * 0.25;
+      }
+    }
+    SC = { entryI, exitI, w: cfg.sc.w, side: cfg.sc.side, n: M };
+  }
+  const NSC = scPts.length;
+  const NS = NSM + NSC;
+
+  /* final struct-of-arrays (hot path reads these constantly) */
+  const CX = new Float32Array(NS), CZ = new Float32Array(NS), CY = new Float32Array(NS);
+  const CDX = new Float32Array(NS), CDZ = new Float32Array(NS);
+  const CRX = new Float32Array(NS), CRZ = new Float32Array(NS);
+  const CCURV = new Float32Array(NS), CW = new Float32Array(NS);
+  const CBANK = new Float32Array(NS), CRAMP = new Float32Array(NS);
+  const CWL = new Float32Array(NS), CWR = new Float32Array(NS);
+  const CSTYLE = new Uint8Array(NS), CSC = new Uint8Array(NS);
+  for (let i = 0; i < NSM; i++) {
+    CX[i] = mCX[i]; CZ[i] = mCZ[i]; CY[i] = mCY[i];
+    CDX[i] = mDX[i]; CDZ[i] = mDZ[i];
+    CRX[i] = mDZ[i]; CRZ[i] = -mDX[i];
+    CCURV[i] = mCURV[i]; CW[i] = mW[i]; CBANK[i] = mBANK[i]; CRAMP[i] = mRAMP[i];
+    CWL[i] = mWL[i]; CWR[i] = mWR[i]; CSTYLE[i] = mSTYLE[i];
+  }
+  for (let k = 0; k < NSC; k++) {
+    const i = NSM + k;
+    const p = scPts[k];
+    const pn = scPts[Math.min(NSC - 1, k + 1)], pp = scPts[Math.max(0, k - 1)];
+    let tx = pn.x - pp.x, tz = pn.z - pp.z;
+    const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+    CX[i] = p.x; CZ[i] = p.z; CY[i] = p.y;
+    CDX[i] = tx; CDZ[i] = tz; CRX[i] = tz; CRZ[i] = -tx;
+    CCURV[i] = 0; CW[i] = SC.w; CBANK[i] = 0; CRAMP[i] = 0;
+    CWL[i] = 0.42; CWR[i] = 0.42; CSTYLE[i] = ST_OPEN; CSC[i] = 1;
+  }
+
+  /* spatial hash over ALL samples (CSR) */
+  const HCELL = 16;
+  let HX0 = 1e9, HZ0 = 1e9, HX1 = -1e9, HZ1 = -1e9;
+  for (let i = 0; i < NS; i++) {
+    if (CX[i] < HX0) HX0 = CX[i]; if (CX[i] > HX1) HX1 = CX[i];
+    if (CZ[i] < HZ0) HZ0 = CZ[i]; if (CZ[i] > HZ1) HZ1 = CZ[i];
+  }
+  HX0 -= 96; HZ0 -= 96; HX1 += 96; HZ1 += 96;
+  const HW = Math.ceil((HX1 - HX0) / HCELL), HH = Math.ceil((HZ1 - HZ0) / HCELL);
+  const hashStart = new Int32Array(HW * HH + 1);
+  let hashItems;
+  {
+    const counts = new Int32Array(HW * HH);
+    const cellOf = i => {
+      const cx = Math.floor((CX[i] - HX0) / HCELL), cz = Math.floor((CZ[i] - HZ0) / HCELL);
+      return cz * HW + cx;
+    };
+    for (let i = 0; i < NS; i++) counts[cellOf(i)]++;
+    let acc = 0;
+    for (let c = 0; c < HW * HH; c++) { hashStart[c] = acc; acc += counts[c]; }
+    hashStart[HW * HH] = acc;
+    hashItems = new Int32Array(acc);
+    const cursor = hashStart.slice(0, HW * HH);
+    for (let i = 0; i < NS; i++) { const c = cellOf(i); hashItems[cursor[c]++] = i; }
+  }
+
+  /* ─────────── terrain height function (THE ground truth) ───────────
+     Blend of nearby samples' cross-profiles, elliptical weighting.
+     Shortcut samples use a tighter reach so they shape their corridor
+     without disturbing the groomed piste next door.                    */
+  const R_LAT = 76;
+  const R_SC = 34;
+  const ALONG = 4;
+  function profileY(j, u, nA, nB) {
+    const w = CW[j];
+    const au = u < 0 ? -u : u;
+    let y = CY[j];
+    if (CRAMP[j] > 0 && au < 5.2) {
+      const t = au < 3.4 ? 1 : (5.2 - au) / 1.8;
+      y += CRAMP[j] * (t * t * (3 - 2 * t));
+    }
+    if (au <= w) return y - CBANK[j] * u;
+    const du = au - w;
+    y -= CBANK[j] * (u < 0 ? -w : w);
+    const ws = u < 0 ? CWL[j] : CWR[j];
+    if (ws >= 0) {
+      y += ws * du + 0.012 * du * du;
+    } else {
+      y += Math.max(ws * du, -13);
+      if (du > 30) y += 0.5 * (du - 30);
+    }
+    const env = du < 7 ? du / 7 : 1;
+    y += env * (nA * 1.7 + nB * 3.1);
+    return y;
+  }
+  const TI = { h: 0, i: 0, u: 0, d: 1e9 };
+  function terrainInfo(x, z) {
+    const nA = noise2(x * 0.09, z * 0.09);
+    const nB = noise2(x * 0.021 + 31.7, z * 0.021 - 12.9);
+    const cx0 = Math.max(0, Math.floor((x - R_LAT - HX0) / HCELL));
+    const cx1 = Math.min(HW - 1, Math.floor((x + R_LAT - HX0) / HCELL));
+    const cz0 = Math.max(0, Math.floor((z - R_LAT - HZ0) / HCELL));
+    const cz1 = Math.min(HH - 1, Math.floor((z + R_LAT - HZ0) / HCELL));
+    let sw = 0, sy = 0, best = -1, bestD = 1e9, bestU = 0;
+    for (let cz = cz0; cz <= cz1; cz++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const c = cz * HW + cx;
+        for (let k = hashStart[c]; k < hashStart[c + 1]; k++) {
+          const j = hashItems[k];
+          const ddx = x - CX[j], ddz = z - CZ[j];
+          const a = ddx * CDX[j] + ddz * CDZ[j];
+          const u = ddx * CRX[j] + ddz * CRZ[j];
+          const de = Math.sqrt(ALONG * ALONG * a * a + u * u);
+          const reach = CSC[j] ? R_SC : R_LAT;
+          if (de >= reach) continue;
+          let wgt = 1 - de / reach;
+          wgt = wgt * wgt; wgt = wgt * wgt * wgt;      // ^6: nearest dominates
+          sw += wgt; sy += wgt * profileY(j, u, nA, nB);
+          if (de < bestD) { bestD = de; best = j; bestU = u; }
+        }
+      }
+    }
+    if (sw > 0) { TI.h = sy / sw; TI.i = best; TI.u = bestU; TI.d = bestD; }
+    else { TI.h = 500; TI.i = -1; TI.u = 0; TI.d = 1e9; }
+    return TI;
+  }
+  function terrainH(x, z) { return terrainInfo(x, z).h; }
+  const GRAD = { x: 0, z: 0 };
+  function terrainGrad(x, z) {
+    const e = 1.4;
+    const hx1 = terrainH(x + e, z), hx0 = terrainH(x - e, z);
+    const hz1 = terrainH(x, z + e), hz0 = terrainH(x, z - e);
+    GRAD.x = (hx1 - hx0) / (2 * e);
+    GRAD.z = (hz1 - hz0) / (2 * e);
+    return GRAD;
+  }
+
+  return {
+    cfg, STEP, NSM, NS, NSC, COURSE_LEN,
+    CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE, CSC,
+    GATES, RAMPS, FINISH_I, SC,
+    HX0, HZ0, HX1, HZ1,
+    terrainInfo, terrainH, terrainGrad,
+    hash2, noise2,
+    // filled in by the scene builder:
+    tiles: null, obs: null, sky: null, peaks: [], snowman: null,
+    goldTrim: null, extras: null,
+  };
 }
 
 /* ═════════════════════ renderer / scene ═════════════════════ */
@@ -707,32 +955,25 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setPixelRatio(1);
 renderer.setSize(VW, VH, false);
 
-const FOG_COL = 0xf2b1a6;
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(FOG_COL, 80, 380);
-scene.background = new THREE.Color(FOG_COL);
+scene.fog = new THREE.Fog(0xf2b1a6, 80, 380);
+scene.background = new THREE.Color(0xf2b1a6);
 
 const camera = new THREE.PerspectiveCamera(63, VW / VH, 0.3, 1500);
 
 // Lights only affect the skier (Lambert). All static world geometry has
-// its sunset lighting BAKED into vertex colors — zero per-fragment cost.
+// its lighting BAKED into vertex colors — zero per-fragment cost. The two
+// lights get retinted per mountain (warm alpenglow vs cold moonlight).
 const sunLight = new THREE.DirectionalLight(0xffd9b0, 1.0);
 sunLight.position.set(-60, 45, -66);
 scene.add(sunLight);
-scene.add(new THREE.HemisphereLight(0xb8c4ff, 0xfff0e8, 0.65));
+const hemiLight = new THREE.HemisphereLight(0xb8c4ff, 0xfff0e8, 0.65);
+scene.add(hemiLight);
 
-/* ─────────────── merged-geometry builders (baked lighting) ─────────────── */
-const SUNX = -0.601, SUNY = 0.451, SUNZ = -0.661;  // normalized sun dir
-function shadeInto(nx, ny, nz, r, g, b, out, o) {
-  let d = nx * SUNX + ny * SUNY + nz * SUNZ;
-  if (d < 0) d = 0;
-  const l = 0.52 + 0.58 * d;
-  // cool violet shadows → warm peach light: the alpenglow bake
-  out[o] = Math.min(1, r * l * (0.80 + 0.33 * d));
-  out[o + 1] = Math.min(1, g * l * (0.86 + 0.14 * d));
-  out[o + 2] = Math.min(1, b * l * (1.14 - 0.26 * d));
-}
-function newMD() { return { p: [], c: [] }; }
+/* ─────────────── merged-geometry builders (baked lighting) ───────────────
+   Every md carries its own bake function (md.shade) so ALPENGLOW geometry
+   bakes warm and NIGHT RIDGE geometry bakes moonlit from the same code.  */
+function newMD(shade) { return { p: [], c: [], shade: shade || shadeAlp }; }
 // hint: outward direction — winding is flipped if the normal disagrees,
 // so callers never have to think about triangle order.
 function pushTri(md, ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b, hx, hy, hz) {
@@ -748,7 +989,7 @@ function pushTri(md, ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b, hx, hy, hz) {
   }
   md.p.push(ax, ay, az, bx, by, bz, cx, cy, cz);
   const col = [0, 0, 0];
-  shadeInto(nx, ny, nz, r, g, b, col, 0);
+  md.shade(nx, ny, nz, r, g, b, col, 0);
   md.c.push(col[0], col[1], col[2], col[0], col[1], col[2], col[0], col[1], col[2]);
 }
 function pushQuad(md, p1, p2, p3, p4, r, g, b, hx, hy, hz) {
@@ -781,7 +1022,25 @@ function pushCone(md, cx, cy, cz, rad, h, seg, r, g, b, jitterFn) {
     pushTri(md, cx, cy + h, cz, x0, cy, z0, x1, cy, z1, r, g, b, mx, h * 0.15, mz);
   }
 }
+// gradient glow fan: center bright → rim black; for ADDITIVE meshes only
+function pushGlowQuad(md, cx, cy, cz, ux, uy, uz, vx, vy, vz, s, r, g, b) {
+  const C = [
+    [cx - ux * s - vx * s, cy - uy * s - vy * s, cz - uz * s - vz * s],
+    [cx + ux * s - vx * s, cy + uy * s - vy * s, cz + uz * s - vz * s],
+    [cx + ux * s + vx * s, cy + uy * s + vy * s, cz + uz * s + vz * s],
+    [cx - ux * s + vx * s, cy - uy * s + vy * s, cz - uz * s + vz * s],
+  ];
+  for (let i = 0; i < 4; i++) {
+    const a = C[i], b2 = C[(i + 1) % 4];
+    md.p.push(cx, cy, cz, a[0], a[1], a[2], b2[0], b2[1], b2[2]);
+    md.c.push(r, g, b, 0, 0, 0, 0, 0, 0);
+  }
+}
 const worldMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+const glowMat = new THREE.MeshBasicMaterial({
+  vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
+  depthWrite: false, side: THREE.DoubleSide,
+});
 function md2mesh(md, mat) {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(md.p), 3));
@@ -790,105 +1049,25 @@ function md2mesh(md, mat) {
   return new THREE.Mesh(geo, mat || worldMat);
 }
 
-/* ═════════════════ terrain tiles + everything merged in ═════════════════ */
-const TILE = 176, TRES = 3.2;
-const TGX0 = Math.floor(HX0 / TILE), TGZ0 = Math.floor(HZ0 / TILE);
-const TGW = Math.ceil((HX1 - HX0) / TILE) + 1, TGH = Math.ceil((HZ1 - HZ0) / TILE) + 1;
-const tileMDs = new Array(TGW * TGH).fill(null);
-const tileHasCourse = new Uint8Array(TGW * TGH);
-for (let i = 0; i < NS; i++) {
-  // a sample influences terrain out to R_LAT — mark tiles in that halo
-  const tx0 = Math.floor((CX[i] - R_LAT) / TILE) - TGX0, tx1 = Math.floor((CX[i] + R_LAT) / TILE) - TGX0;
-  const tz0 = Math.floor((CZ[i] - R_LAT) / TILE) - TGZ0, tz1 = Math.floor((CZ[i] + R_LAT) / TILE) - TGZ0;
-  for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
-    if (tx >= 0 && tz >= 0 && tx < TGW && tz < TGH) tileHasCourse[tz * TGW + tx] = 1;
-  }
-}
-function tileMD(tx, tz) {
-  const c = tz * TGW + tx;
-  if (!tileMDs[c]) tileMDs[c] = newMD();
-  return tileMDs[c];
-}
-function tileMDAt(x, z) {
-  const tx = clamp(Math.floor(x / TILE) - TGX0, 0, TGW - 1);
-  const tz = clamp(Math.floor(z / TILE) - TGZ0, 0, TGH - 1);
-  return tileMD(tx, tz);
-}
-
-// face palette for the mountain
-function terrainColor(domI, u, ny, fx, fz, out) {
-  const w = CW[domI], au = u < 0 ? -u : u;
-  const jit = hash2(Math.floor(fx * 2.1), Math.floor(fz * 2.1)) * 0.014;
-  if (ny < 0.62) { // steep = bare rock, dusted with snow as it flattens
-    const n = noise2(fx * 0.13, fz * 0.13) * 0.05;
-    const dust = clamp((ny - 0.45) * 2.2, 0, 0.55);
-    out[0] = lerp(0.36 + n, 0.88, dust) + jit;
-    out[1] = lerp(0.35 + n, 0.90, dust) + jit;
-    out[2] = lerp(0.42 + n, 0.99, dust) + jit;
-    return;
-  }
-  if (au <= w) { // groomed piste — bright, faint corduroy stripes
-    const cord = 0.03 * Math.sin(u * 2.5);
-    let r = 0.955 + cord + jit, g = 0.968 + cord + jit, b = 1.0;
-    if (CRAMP[domI] > 0.15 && au < 5.4) { r = 0.855; g = 0.935; b = 1.0; } // sculpted kicker
-    if (au > w - 0.7) { r -= 0.13; g -= 0.08; }                            // groom edge
-    out[0] = r; out[1] = g; out[2] = b;
-    return;
-  }
-  // off-piste powder: bluer, softer, wind-shaped patches
-  const k = clamp(noise2(fx * 0.045, fz * 0.045), 0, 1) * 0.55;
-  out[0] = lerp(0.865, 0.735, k) + jit;
-  out[1] = lerp(0.905, 0.815, k) + jit;
-  out[2] = 1.0;
-}
-
-(function buildTerrain() {
-  const NV = Math.round(TILE / TRES) + 1;
-  const hs = new Float32Array(NV * NV), us = new Float32Array(NV * NV);
-  const ds = new Float32Array(NV * NV); const dom = new Int32Array(NV * NV);
-  const col = [0, 0, 0];
-  for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
-    if (!tileHasCourse[tz * TGW + tx]) continue;
-    const ox = (TGX0 + tx) * TILE, oz = (TGZ0 + tz) * TILE;
-    for (let vz = 0; vz < NV; vz++) for (let vx = 0; vx < NV; vx++) {
-      const ti = terrainInfo(ox + vx * TRES, oz + vz * TRES);
-      const n = vz * NV + vx;
-      hs[n] = ti.h; us[n] = ti.u; ds[n] = ti.d; dom[n] = ti.i;
-    }
-    const md = tileMD(tx, tz);
-    for (let vz = 0; vz < NV - 1; vz++) for (let vx = 0; vx < NV - 1; vx++) {
-      const n00 = vz * NV + vx, n10 = n00 + 1, n01 = n00 + NV, n11 = n01 + 1;
-      if (ds[n00] > 70 || ds[n10] > 70 || ds[n01] > 70 || ds[n11] > 70) continue;
-      const x0 = ox + vx * TRES, x1 = x0 + TRES;
-      const z0 = oz + vz * TRES, z1 = z0 + TRES;
-      // pick the vertex closest to the course as the color authority
-      let bn = n00;
-      if (ds[n10] < ds[bn]) bn = n10;
-      if (ds[n01] < ds[bn]) bn = n01;
-      if (ds[n11] < ds[bn]) bn = n11;
-      // tri A: (00,10,11)  tri B: (00,11,01)
-      for (let t = 0; t < 2; t++) {
-        const ax = x0, ay = hs[n00], az = z0;
-        const bx2 = t === 0 ? x1 : x1, by = t === 0 ? hs[n10] : hs[n11], bz = t === 0 ? z0 : z1;
-        const cx2 = t === 0 ? x1 : x0, cy2 = t === 0 ? hs[n11] : hs[n01], cz2 = t === 0 ? z1 : z1;
-        // face normal for color choice (rock vs snow)
-        let ux = bx2 - ax, uy = by - ay, uz = bz - az;
-        let vx2 = cx2 - ax, vy2 = cy2 - ay, vz2 = cz2 - az;
-        let ny = uz * vx2 - ux * vz2; // y of cross
-        const nx = uy * vz2 - uz * vy2, nz = ux * vy2 - uy * vx2;
-        const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
-        let nyn = Math.abs(ny / nl);
-        terrainColor(dom[bn], us[bn], nyn, (ax + bx2 + cx2) / 3, (az + bz + cz2) / 3, col);
-        pushTri(md, ax, ay, az, bx2, by, bz, cx2, cy2, cz2, col[0], col[1], col[2], 0, 1, 0);
-      }
-    }
-  }
+const rockTmpl = (function () {
+  const g = new THREE.IcosahedronGeometry(1, 0);
+  return g.getAttribute('position').array.slice();
 })();
-
-/* ═════════════════ trees, rocks, stakes, fences, signs ═════════════════ */
-// collidable obstacle list → CSR hash (queried per tick, zero alloc)
-const obsX = [], obsZ = [], obsR = [];
-function addObstacle(x, z, r) { obsX.push(x); obsZ.push(z); obsR.push(r); }
+const ballTmpl = (function () {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  return g.getAttribute('position').array.slice();
+})();
+function pushBall(md, x, y, z, rad, r, g, b) {
+  for (let f = 0; f < ballTmpl.length; f += 9) {
+    const P = [];
+    for (let v = 0; v < 3; v++) {
+      P.push([x + ballTmpl[f + v * 3] * rad, y + ballTmpl[f + v * 3 + 1] * rad, z + ballTmpl[f + v * 3 + 2] * rad]);
+    }
+    pushTri(md, P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
+      r, g, b,
+      (P[0][0] + P[1][0] + P[2][0]) / 3 - x, (P[0][1] + P[1][1] + P[2][1]) / 3 - y, (P[0][2] + P[1][2] + P[2][2]) / 3 - z);
+  }
+}
 
 function pushTree(md, x, z, gy, sc, tintR) {
   const g1 = lerp(0.10, 0.16, tintR), g2 = lerp(0.29, 0.37, tintR), g3 = lerp(0.26, 0.30, tintR);
@@ -898,10 +1077,6 @@ function pushTree(md, x, z, gy, sc, tintR) {
   pushCone(md, x, gy + 3.35 * sc, z, 0.74 * sc, 1.75 * sc, 6, g1 * 1.3, g2 * 1.18, g3 * 1.15);
   pushCone(md, x, gy + 4.45 * sc, z, 0.44 * sc, 0.95 * sc, 6, 0.93, 0.95, 1.0); // snow cap
 }
-const rockTmpl = (function () {
-  const g = new THREE.IcosahedronGeometry(1, 0);
-  return g.getAttribute('position').array.slice();
-})();
 function pushRock(md, x, z, gy, sc, seed) {
   const rr = mulberry32(seed);
   const sy = sc * lerp(0.55, 0.85, rr()), yaw = rr() * Math.PI * 2;
@@ -916,7 +1091,6 @@ function pushRock(md, x, z, gy, sc, seed) {
       px *= sc * jj; py *= sy * jj; pz *= sc * jj;
       P.push([x + px * co + pz * si, gy + py + sy * 0.55, z - px * si + pz * co]);
     }
-    // upward faces get a snow cap
     const upy = (P[0][1] + P[1][1] + P[2][1]) / 3 - (gy + sy * 0.55);
     const snowy = upy > sy * 0.30;
     const cr = snowy ? 0.92 : 0.41, cg = snowy ? 0.94 : 0.395, cb = snowy ? 1.0 : 0.45;
@@ -925,101 +1099,8 @@ function pushRock(md, x, z, gy, sc, seed) {
       cr, cg, cb, mx, upy, mz);
   }
 }
-
-(function plantForest() {
-  const rr = mulberry32(SEED ^ 0x5eed);
-  // slalom gate trees — the technical sections' teeth, near the piste edge
-  let sinceGate = 0, side = 1;
-  for (let i = 4; i < NS - 8; i++) {
-    const st = CSTYLE[i];
-    sinceGate += STEP;
-    if (st === ST_SLALOM && sinceGate > 24) {
-      sinceGate = 0; side = -side;
-      const u = side * (CW[i] - 2.2);
-      const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
-      const gy = terrainH(x, z);
-      pushTree(tileMDAt(x, z), x, z, gy - 0.15, lerp(0.95, 1.15, rr()), rr());
-      addObstacle(x, z, 0.85);
-    }
-    // forest bands beside the course
-    if (i % 2 === 0) {
-      for (let sgn = -1; sgn <= 1; sgn += 2) {
-        const wall = sgn < 0 ? CWL[i] : CWR[i];
-        if (wall < 0) continue;             // no trees hanging over the cliff
-        const dens = st === ST_SLALOM ? 0.30 : st === ST_OPEN ? 0.52 : 0.44;
-        for (let k = 0; k < 4; k++) {
-          const u = sgn * (CW[i] + 5 + k * 13 + rr() * 9);
-          const x = CX[i] + CRX[i] * u + (rr() - 0.5) * 4;
-          const z = CZ[i] + CRZ[i] * u + (rr() - 0.5) * 4;
-          const n = noise2(x * 0.03, z * 0.03) * 0.5 + 0.5;
-          if (n + rr() * 0.35 < dens + k * 0.06) continue;
-          const gy = terrainH(x, z);
-          if (gy > CY[i] + 26) continue;     // not up on the crags
-          // no trees clinging to rock faces
-          const sx2 = (terrainH(x + 2.2, z) - terrainH(x - 2.2, z)) / 4.4;
-          const sz2 = (terrainH(x, z + 2.2) - terrainH(x, z - 2.2)) / 4.4;
-          if (sx2 * sx2 + sz2 * sz2 > 0.42) continue;
-          const sc = lerp(0.8, 1.35, rr());
-          pushTree(tileMDAt(x, z), x, z, gy - 0.15, sc, rr());
-          if (Math.abs(u) < CW[i] + 8) addObstacle(x, z, 0.85 * sc);
-        }
-      }
-    }
-    // scattered boulders
-    if (i % 13 === 0 && st !== ST_RIDGE) {
-      const sgn = rr() < 0.5 ? -1 : 1;
-      if ((sgn < 0 ? CWL[i] : CWR[i]) >= 0) {
-        const u = sgn * (CW[i] + 2.5 + rr() * 13);
-        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
-        const gy = terrainH(x, z);
-        // boulders only rest on gentle ground — no hovering off steep banks
-        const rsx = (terrainH(x + 2, z) - terrainH(x - 2, z)) / 4;
-        const rsz = (terrainH(x, z + 2) - terrainH(x, z - 2)) / 4;
-        if (rsx * rsx + rsz * rsz < 0.2) {
-          const sc = lerp(0.7, 1.9, rr());
-          pushRock(tileMDAt(x, z), x, z, gy - 0.45 * sc, sc, (SEED ^ i * 7919) >>> 0);
-          if (Math.abs(u) < CW[i] + 7) addObstacle(x, z, sc * 0.9);
-        }
-      }
-    }
-    // piste edge stakes (skip in the tree slaloms — trees mark the line)
-    if (i % 5 === 0 && st !== ST_SLALOM) {
-      for (let sgn = -1; sgn <= 1; sgn += 2) {
-        const u = sgn * (CW[i] + 0.7);
-        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
-        const gy = terrainH(x, z);
-        pushBox(tileMDAt(x, z), x, gy + 0.42, z, 0.13, 0.9, 0.13, 0, 1.0, 0.42, 0.16);
-      }
-    }
-  }
-  // canyon-rim fences along ridge sections (cliff side)
-  let prevPost = null;
-  for (let i = 2; i < NS - 2; i += 2) {
-    if (CSTYLE[i] !== ST_RIDGE) { prevPost = null; continue; }
-    const sgn = CWL[i] < 0 ? -1 : (CWR[i] < 0 ? 1 : 0);
-    if (!sgn) { prevPost = null; continue; }
-    const u = sgn * (CW[i] + 1.8);
-    const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
-    const gy = terrainH(x, z);
-    const md = tileMDAt(x, z);
-    pushBox(md, x, gy + 0.55, z, 0.18, 1.15, 0.18, 0, 0.34, 0.26, 0.19);
-    if (prevPost) {
-      const mx = (x + prevPost[0]) / 2, mz = (z + prevPost[2]) / 2;
-      const ddx = x - prevPost[0], ddz = z - prevPost[2];
-      const len = Math.sqrt(ddx * ddx + ddz * ddz);
-      const yaw = Math.atan2(ddx, ddz);
-      for (let rail = 0; rail < 2; rail++) {
-        const ry = lerp(gy + 0.45, gy + 0.95, rail) + (prevPost[1] - gy) / 2;
-        pushBox(md, mx, ry, mz, 0.09, 0.12, len, yaw, 0.46, 0.36, 0.26);
-      }
-    }
-    prevPost = [x, gy + 0.55, z];
-  }
-})();
-
-/* chevron warning signs at every hairpin entry */
+// a bar in panel space (axes a=across, b=up), both faces emitted
 function panelBar(md, o, ax, ay, az, bx, by, bz, x1, y1, x2, y2, hw, r, g, b, nx, ny, nz) {
-  // a bar in panel space (axes a=across, b=up), both faces emitted
   const dx = x2 - x1, dy = y2 - y1; const dl = Math.hypot(dx, dy) || 1;
   const px = -dy / dl * hw, py = dx / dl * hw;
   const P = (u, v) => [o[0] + ax * u + bx * v, o[1] + ay * u + by * v, o[2] + az * u + bz * v];
@@ -1027,246 +1108,684 @@ function panelBar(md, o, ax, ay, az, bx, by, bz, x1, y1, x2, y2, hw, r, g, b, nx
   pushQuad(md, q1, q2, q3, q4, r, g, b, nx, ny, nz);
   pushQuad(md, q1, q4, q3, q2, r, g, b, -nx, -ny, -nz);
 }
-(function placeChevrons() {
-  let i = 0;
-  while (i < NS) {
-    if (CSTYLE[i] !== ST_HAIRPIN) { i++; continue; }
-    let j = i; let curvSum = 0;
-    while (j < NS && CSTYLE[j] === ST_HAIRPIN) { curvSum += CCURV[j]; j++; }
-    const turnRight = curvSum > 0;
-    const outer = turnRight ? -1 : 1;           // outer side of the turn
-    for (const off of [-6, Math.floor((j - i) * 0.35)]) {
-      const k = clamp(i + off, 2, NS - 3);
-      const u = outer * (CW[k] + 3.2);
-      const x = CX[k] + CRX[k] * u, z = CZ[k] + CRZ[k] * u;
-      const gy = terrainH(x, z);
-      const md = tileMDAt(x, z);
-      // posts + big orange panel facing oncoming skiers
-      const ax = CRX[k], az = CRZ[k];           // across = course right vector
-      const nx = -CDX[k], nz = -CDZ[k];         // face back up the course
-      pushBox(md, x - ax * 1.35, gy + 1.0, z - az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
-      pushBox(md, x + ax * 1.35, gy + 1.0, z + az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
-      const o = [x, gy + 2.0, z];
-      // navy frame then orange face
-      panelBar(md, o, ax, 0, az, 0, 1, 0, -1.62, 0, 1.62, 0, 0.72, 0.125, 0.135, 0.24, nx, 0, nz);
-      const o2 = [x + nx * 0.05, gy + 2.0, z + nz * 0.05];
-      panelBar(md, o2, ax, 0, az, 0, 1, 0, -1.5, 0, 1.5, 0, 0.6, 0.96, 0.30, 0.10, nx, 0, nz);
-      // three white chevrons pointing INTO the turn. The approaching skier
-      // views the panel face-on, which MIRRORS the course-right axis, so the
-      // sign is flipped relative to intuition.
-      const dir = turnRight ? -1 : 1;
-      for (let cvi = 0; cvi < 3; cvi++) {
-        const cx0 = (cvi - 1) * 0.88 * dir;
-        const o3 = [x + nx * 0.10, gy + 2.0, z + nz * 0.10];
-        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 - 0.22 * dir, 0.36, cx0 + 0.22 * dir, 0.02, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
-        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 + 0.22 * dir, 0.02, cx0 - 0.22 * dir, -0.34, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+
+/* ═════════════ buildWorldScene(W) — meshes for one mountain ═════════════ */
+function buildWorldScene(W) {
+  const cfg = W.cfg;
+  const { NSM, NS, STEP, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CW, CWL, CWR, CSTYLE, CRAMP, CSC,
+    GATES, RAMPS, FINISH_I, SC, terrainH, terrainInfo, hash2, noise2 } = W;
+  const R_LAT = 76;
+
+  /* ── terrain tiles, everything merged in ── */
+  const TILE = 176, TRES = 3.2;
+  const TGX0 = Math.floor(W.HX0 / TILE), TGZ0 = Math.floor(W.HZ0 / TILE);
+  const TGW = Math.ceil((W.HX1 - W.HX0) / TILE) + 1, TGH = Math.ceil((W.HZ1 - W.HZ0) / TILE) + 1;
+  const tileMDs = new Array(TGW * TGH).fill(null);
+  const tileHasCourse = new Uint8Array(TGW * TGH);
+  for (let i = 0; i < NSM; i++) {
+    const tx0 = Math.floor((CX[i] - R_LAT) / TILE) - TGX0, tx1 = Math.floor((CX[i] + R_LAT) / TILE) - TGX0;
+    const tz0 = Math.floor((CZ[i] - R_LAT) / TILE) - TGZ0, tz1 = Math.floor((CZ[i] + R_LAT) / TILE) - TGZ0;
+    for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
+      if (tx >= 0 && tz >= 0 && tx < TGW && tz < TGH) tileHasCourse[tz * TGW + tx] = 1;
+    }
+  }
+  function tileMD(tx, tz) {
+    const c = tz * TGW + tx;
+    if (!tileMDs[c]) tileMDs[c] = newMD(cfg.shade);
+    return tileMDs[c];
+  }
+  function tileMDAt(x, z) {
+    const tx = clamp(Math.floor(x / TILE) - TGX0, 0, TGW - 1);
+    const tz = clamp(Math.floor(z / TILE) - TGZ0, 0, TGH - 1);
+    return tileMD(tx, tz);
+  }
+
+  // face palette for the mountain (same albedos both mountains — the bake
+  // fn turns them warm or moonlit). Shortcut corridor snow gets a faint
+  // packed tint + twin old-ski-track grooves, blended in from the entry.
+  function terrainColor(domI, u, ny, fx, fz, out) {
+    const w = CW[domI], au = u < 0 ? -u : u;
+    const jit = hash2(Math.floor(fx * 2.1), Math.floor(fz * 2.1)) * 0.014;
+    if (ny < 0.62) { // steep = bare rock, dusted with snow as it flattens
+      const n = noise2(fx * 0.13, fz * 0.13) * 0.05;
+      const dust = clamp((ny - 0.45) * 2.2, 0, 0.55);
+      out[0] = lerp(0.36 + n, 0.88, dust) + jit;
+      out[1] = lerp(0.35 + n, 0.90, dust) + jit;
+      out[2] = lerp(0.42 + n, 0.99, dust) + jit;
+      return;
+    }
+    if (CSC[domI]) { // hidden-shortcut corridor: powder, quietly tracked
+      const k = clamp(noise2(fx * 0.045, fz * 0.045), 0, 1) * 0.35;
+      let r = lerp(0.895, 0.795, k), g = lerp(0.925, 0.855, k), b = 1.0;
+      if (au <= w + 2) {
+        const tr = Math.exp(-((au - 0.7) * (au - 0.7)) / 0.16) +
+                   Math.exp(-((au - 1.6) * (au - 1.6)) / 0.20) * 0.6;
+        const f = 0.085 * tr;                      // faint old ski tracks
+        r -= f; g -= f * 0.8; b -= f * 0.5;
       }
-    }
-    i = j;
-  }
-})();
-
-/* checkpoint gates, start arch, finish arch */
-function pushGate(gi, big, checker) {
-  const w = CW[gi] + 0.8;
-  const lx = CX[gi] - CRX[gi] * w, lz = CZ[gi] - CRZ[gi] * w;
-  const rx = CX[gi] + CRX[gi] * w, rz = CZ[gi] + CRZ[gi] * w;
-  const ly = terrainH(lx, lz), ry = terrainH(rx, rz);
-  const topY = Math.max(ly, ry) + (big ? 5.4 : 4.4);
-  const md = tileMDAt(CX[gi], CZ[gi]);
-  const yaw = Math.atan2(CDX[gi], CDZ[gi]);
-  for (const [px, pz, py] of [[lx, lz, ly], [rx, rz, ry]]) {
-    if (big) { // candy-stripe poles
-      const segs = 5, h = topY - py;
-      for (let s2 = 0; s2 < segs; s2++) {
-        const red = s2 % 2 === 0;
-        pushBox(md, px, py + h * (s2 + 0.5) / segs, pz, 0.34, h / segs, 0.34, yaw,
-          red ? 0.92 : 0.97, red ? 0.22 : 0.96, red ? 0.20 : 0.94);
+      // blend toward the groomed look for the first/last few samples so the
+      // seam with the piste never mottles
+      const li = domI - NSM;
+      const edge = Math.min(li, (NS - NSM - 1) - li);
+      if (edge < 4) {
+        const t = edge / 4;
+        r = lerp(0.955, r, t); g = lerp(0.968, g, t); b = lerp(1.0, b, t);
       }
-    } else {
-      pushBox(md, px, (py + topY) / 2, pz, 0.26, topY - py, 0.26, yaw, 0.14, 0.66, 0.84);
+      out[0] = r + jit; out[1] = g + jit; out[2] = b;
+      return;
     }
+    if (au <= w) { // groomed piste — bright, faint corduroy stripes
+      const cord = 0.03 * Math.sin(u * 2.5);
+      let r = 0.955 + cord + jit, g = 0.968 + cord + jit, b = 1.0;
+      if (CRAMP[domI] > 0.15 && au < 5.4) { r = 0.855; g = 0.935; b = 1.0; } // sculpted kicker
+      if (au > w - 0.7) { r -= 0.13; g -= 0.08; }                            // groom edge
+      out[0] = r; out[1] = g; out[2] = b;
+      return;
+    }
+    // off-piste powder: bluer, softer, wind-shaped patches
+    const k = clamp(noise2(fx * 0.045, fz * 0.045), 0, 1) * 0.55;
+    out[0] = lerp(0.865, 0.735, k) + jit;
+    out[1] = lerp(0.905, 0.815, k) + jit;
+    out[2] = 1.0;
   }
-  // banner bar
-  const span = w * 2 + 0.6;
-  const bx = (lx + rx) / 2, bz = (lz + rz) / 2;
-  pushBox(md, bx, topY + 0.55, bz, 0.3, 1.15, span, yaw + Math.PI / 2, 0.125, 0.135, 0.24);
-  pushBox(md, bx, topY - 0.02, bz, 0.32, 0.14, span, yaw + Math.PI / 2, 1.0, 0.83, 0.24);
-  if (checker) { // finish checker squares proud of the banner
-    const n = Math.floor(span / 1.1);
-    for (let s2 = 0; s2 < n; s2++) {
-      const t = (s2 + 0.5) / n - 0.5;
-      const sqx = bx + CRX[gi] * t * span, sqz = bz + CRZ[gi] * t * span;
-      const up = s2 % 2 === 0;
-      pushBox(md, sqx, topY + (up ? 0.80 : 0.32), sqz, 0.36, 0.44, 0.46, yaw + Math.PI / 2,
-        up ? 0.97 : 0.10, up ? 0.97 : 0.11, up ? 0.96 : 0.18);
-    }
-  } else { // little yellow pennants under checkpoint banners
-    for (let s2 = -1; s2 <= 1; s2++) {
-      const px2 = bx + CRX[gi] * s2 * span * 0.28, pz2 = bz + CRZ[gi] * s2 * span * 0.28;
-      pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
-        px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
-        px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, CDX[gi], 0, CDZ[gi]);
-      pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
-        px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
-        px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, -CDX[gi], 0, -CDZ[gi]);
-    }
-  }
-}
-for (const gi of GATES) pushGate(gi, false, false);
-pushGate(3, false, false);            // start gate
-pushGate(FINISH_I, true, true);       // finish arch
 
-/* ── turn tile MDs into meshes (one merged mesh per tile) ── */
-const tiles = [];   // {mesh, cx, cz}
-for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
-  const md = tileMDs[tz * TGW + tx];
-  if (!md || md.p.length === 0) continue;
-  const mesh = md2mesh(md);
-  mesh.matrixAutoUpdate = false;
-  mesh.updateMatrix();
-  scene.add(mesh);
-  tiles.push({ mesh, cx: (TGX0 + tx + 0.5) * TILE, cz: (TGZ0 + tz + 0.5) * TILE });
-}
-tileMDs.length = 0; // free build arrays
-
-/* obstacle CSR hash for per-tick collision queries */
-const ONUM = obsX.length;
-const OX = new Float32Array(obsX), OZ = new Float32Array(obsZ), OR = new Float32Array(obsR);
-const OCELL = 12;
-const OW = Math.ceil((HX1 - HX0) / OCELL), OH = Math.ceil((HZ1 - HZ0) / OCELL);
-const obsStart = new Int32Array(OW * OH + 1);
-let obsItems;
-(function buildObsHash() {
-  const counts = new Int32Array(OW * OH);
-  const cellOf = i => {
-    const cx = clamp(Math.floor((OX[i] - HX0) / OCELL), 0, OW - 1);
-    const cz = clamp(Math.floor((OZ[i] - HZ0) / OCELL), 0, OH - 1);
-    return cz * OW + cx;
-  };
-  for (let i = 0; i < ONUM; i++) counts[cellOf(i)]++;
-  let acc = 0;
-  for (let c = 0; c < OW * OH; c++) { obsStart[c] = acc; acc += counts[c]; }
-  obsStart[OW * OH] = acc;
-  obsItems = new Int32Array(acc);
-  const cursor = obsStart.slice(0, OW * OH);
-  for (let i = 0; i < ONUM; i++) { const c = cellOf(i); obsItems[cursor[c]++] = i; }
-})();
-
-/* ═════════════════ sky, sun, clouds, distant peaks ═════════════════ */
-const skyGroup = new THREE.Group();
-scene.add(skyGroup);
-(function buildSky() {
-  const geo = new THREE.SphereGeometry(1100, 20, 12);
-  const pos = geo.getAttribute('position');
-  const cols = new Float32Array(pos.count * 3);
-  const stops = [ // t (0 horizon-ish → 1 zenith), r,g,b — alpenglow gradient
-    [-1.0, 0.98, 0.73, 0.60], [0.0, 1.00, 0.80, 0.62], [0.06, 0.98, 0.67, 0.63],
-    [0.20, 0.84, 0.64, 0.78], [0.5, 0.55, 0.62, 0.90], [1.0, 0.40, 0.51, 0.86],
-  ];
-  for (let i = 0; i < pos.count; i++) {
-    const t = pos.getY(i) / 1100;
-    let a = stops[0], b = stops[stops.length - 1];
-    for (let s2 = 0; s2 < stops.length - 1; s2++) {
-      if (t >= stops[s2][0] && t <= stops[s2 + 1][0]) { a = stops[s2]; b = stops[s2 + 1]; break; }
-    }
-    const k = smoothstep((t - a[0]) / (b[0] - a[0] || 1));
-    cols[i * 3] = lerp(a[1], b[1], k); cols[i * 3 + 1] = lerp(a[2], b[2], k); cols[i * 3 + 2] = lerp(a[3], b[3], k);
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
-  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
-  const dome = new THREE.Mesh(geo, mat);
-  dome.renderOrder = -10;
-  dome.frustumCulled = false;
-  skyGroup.add(dome);
-  // low sunset sun + soft halo
-  const sunDist = 980;
-  const sx = -0.66 * sunDist, sy = 0.15 * sunDist, sz = -0.70 * sunDist;
-  const disc = new THREE.Mesh(new THREE.CircleGeometry(52, 20),
-    new THREE.MeshBasicMaterial({ color: 0xfff3cc, fog: false, depthWrite: false }));
-  disc.position.set(sx, sy, sz); disc.lookAt(0, 0, 0); disc.renderOrder = -9;
-  skyGroup.add(disc);
-  const halo = new THREE.Mesh(new THREE.CircleGeometry(150, 20),
-    new THREE.MeshBasicMaterial({ color: 0xffc890, fog: false, depthWrite: false, transparent: true, opacity: 0.30 }));
-  halo.position.set(sx * 0.995, sy * 0.995, sz * 0.995); halo.lookAt(0, 0, 0); halo.renderOrder = -9;
-  skyGroup.add(halo);
-  // floating low-poly clouds
-  const cmd = newMD();
-  const rr = mulberry32(SEED ^ 0xc10d);
-  for (let c = 0; c < 12; c++) {
-    const ang = rr() * Math.PI * 2, dist = lerp(380, 850, rr());
-    const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
-    const cy = lerp(130, 330, rr());
-    const blobs = 3 + Math.floor(rr() * 3);
-    for (let b = 0; b < blobs; b++) {
-      const bx = cx + (rr() - 0.5) * 55, by = cy + (rr() - 0.5) * 9, bz = cz + (rr() - 0.5) * 34;
-      const sxr = lerp(13, 30, rr()), syr = lerp(3.5, 6.5, rr()), szr = lerp(9, 20, rr());
-      for (let f = 0; f < rockTmpl.length; f += 9) {
-        const P = [];
-        for (let v = 0; v < 3; v++) {
-          P.push([bx + rockTmpl[f + v * 3] * sxr, by + rockTmpl[f + v * 3 + 1] * syr, bz + rockTmpl[f + v * 3 + 2] * szr]);
+  (function buildTerrain() {
+    const NV = Math.round(TILE / TRES) + 1;
+    const hs = new Float32Array(NV * NV), us = new Float32Array(NV * NV);
+    const ds = new Float32Array(NV * NV); const dom = new Int32Array(NV * NV);
+    const col = [0, 0, 0];
+    for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
+      if (!tileHasCourse[tz * TGW + tx]) continue;
+      const ox = (TGX0 + tx) * TILE, oz = (TGZ0 + tz) * TILE;
+      for (let vz = 0; vz < NV; vz++) for (let vx = 0; vx < NV; vx++) {
+        const ti = terrainInfo(ox + vx * TRES, oz + vz * TRES);
+        const n = vz * NV + vx;
+        hs[n] = ti.h; us[n] = ti.u; ds[n] = ti.d; dom[n] = ti.i;
+      }
+      const md = tileMD(tx, tz);
+      for (let vz = 0; vz < NV - 1; vz++) for (let vx = 0; vx < NV - 1; vx++) {
+        const n00 = vz * NV + vx, n10 = n00 + 1, n01 = n00 + NV, n11 = n01 + 1;
+        if (ds[n00] > 70 || ds[n10] > 70 || ds[n01] > 70 || ds[n11] > 70) continue;
+        const x0 = ox + vx * TRES, x1 = x0 + TRES;
+        const z0 = oz + vz * TRES, z1 = z0 + TRES;
+        let bn = n00;
+        if (ds[n10] < ds[bn]) bn = n10;
+        if (ds[n01] < ds[bn]) bn = n01;
+        if (ds[n11] < ds[bn]) bn = n11;
+        for (let t = 0; t < 2; t++) {
+          const ax = x0, ay = hs[n00], az = z0;
+          const bx2 = t === 0 ? x1 : x1, by = t === 0 ? hs[n10] : hs[n11], bz = t === 0 ? z0 : z1;
+          const cx2 = t === 0 ? x1 : x0, cy2 = t === 0 ? hs[n11] : hs[n01], cz2 = t === 0 ? z1 : z1;
+          let ux = bx2 - ax, uy = by - ay, uz = bz - az;
+          let vx2 = cx2 - ax, vy2 = cy2 - ay, vz2 = cz2 - az;
+          let ny = uz * vx2 - ux * vz2;
+          const nx = uy * vz2 - uz * vy2, nz = ux * vy2 - uy * vx2;
+          const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+          let nyn = Math.abs(ny / nl);
+          terrainColor(dom[bn], us[bn], nyn, (ax + bx2 + cx2) / 3, (az + bz + cz2) / 3, col);
+          pushTri(md, ax, ay, az, bx2, by, bz, cx2, cy2, cz2, col[0], col[1], col[2], 0, 1, 0);
         }
-        const my = (P[0][1] + P[1][1] + P[2][1]) / 3 - by;
-        pushTri(cmd, P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
-          0.99, 0.90, 0.92, (P[0][0] + P[1][0] + P[2][0]) / 3 - bx, my, (P[0][2] + P[1][2] + P[2][2]) / 3 - bz);
       }
     }
-  }
-  const clouds = md2mesh(cmd, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
-  clouds.renderOrder = -8;
-  clouds.frustumCulled = false;
-  skyGroup.add(clouds);
-})();
+  })();
 
-// distant peak backdrop — world-fixed, pre-hazed toward the fog color
-(function buildPeaks() {
-  const md = newMD();
-  const rr = mulberry32(SEED ^ 0x9ea1);
-  const fogc = [0.949, 0.694, 0.651];
-  // A peak's jagged base reaches ~1.3×rad. The course winds back on itself,
-  // so "700m beside sample k" can still sit ON a later switchback — check the
-  // footprint against every course sample, not just the anchor.
-  const PEAK_CLEAR = 130;
-  function onCourse(px, pz, rad) {
-    const r2 = (rad * 1.3 + PEAK_CLEAR) * (rad * 1.3 + PEAK_CLEAR);
-    for (let i = 0; i < NS; i++) {
-      const dx = CX[i] - px, dz = CZ[i] - pz;
-      if (dx * dx + dz * dz < r2) return true;
+  /* ── trees, rocks, stakes, fences — corridor-aware ── */
+  const obsX = [], obsZ = [], obsR = [];
+  function addObstacle(x, z, r) { obsX.push(x); obsZ.push(z); obsR.push(r); }
+  // keep planted things OUT of the hidden shortcut corridor
+  function inCorridor(x, z, margin) {
+    if (!SC) return false;
+    const m2 = (SC.w + margin) * (SC.w + margin);
+    for (let k = NSM; k < NS; k++) {
+      const dx = x - CX[k], dz = z - CZ[k];
+      if (dx * dx + dz * dz < m2) return true;
     }
     return false;
   }
-  window.__ppPeaks = [];
-  for (let k = 0; k < 14; k++) {
-    const ci = Math.floor((k / 14) * (NS - 1));
-    const side = k % 2 === 0 ? -1 : 1;
-    let dist = 0, px = 0, pz = 0, rad = 0, h = 0, placed = false;
-    for (let tr = 0; tr < 24 && !placed; tr++) {
-      dist = lerp(420, 700, rr()) + tr * 30;
-      px = CX[ci] + CRX[ci] * side * dist + (rr() - 0.5) * 200;
-      pz = CZ[ci] + CRZ[ci] * side * dist + (rr() - 0.5) * 200;
-      rad = lerp(150, 280, rr()); h = lerp(170, 330, rr());
-      placed = !onCourse(px, pz, rad);
+  function distToMainLine(x, z, i0, i1) {
+    let bd = 1e18;
+    for (let i = Math.max(0, i0); i <= Math.min(NSM - 1, i1); i++) {
+      const d = (CX[i] - x) * (CX[i] - x) + (CZ[i] - z) * (CZ[i] - z);
+      if (d < bd) bd = d;
     }
-    if (!placed) continue; // rather one fewer peak than a blindfold on the piste
-    const baseY = CY[ci] - 40;
-    const haze = lerp(0.50, 0.72, Math.min(1, (dist - 420) / 280));
-    window.__ppPeaks.push({ x: px, z: pz, r: rad * 1.3 });
-    const jitters = [];
-    for (let s2 = 0; s2 < 10; s2++) jitters.push(lerp(0.7, 1.3, rr()));
-    // snow massif: shade first, then hand-mix toward fog for aerial haze
-    const tmp = newMD();
-    pushCone(tmp, px, baseY, pz, rad, h, 7, 0.90, 0.90, 1.0, i2 => jitters[i2 % 10]);
-    for (let ci2 = 0; ci2 < tmp.c.length; ci2 += 3) {
-      tmp.c[ci2] = lerp(tmp.c[ci2], fogc[0], haze);
-      tmp.c[ci2 + 1] = lerp(tmp.c[ci2 + 1], fogc[1], haze);
-      tmp.c[ci2 + 2] = lerp(tmp.c[ci2 + 2], fogc[2], haze);
-    }
-    md.p.push(...tmp.p); md.c.push(...tmp.c);
+    return Math.sqrt(bd);
   }
-  const peaks = md2mesh(md, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
-  peaks.renderOrder = -7;
-  scene.add(peaks);
-})();
+
+  (function plantForest() {
+    const rr = mulberry32(cfg.seed ^ 0x5eed);
+    let sinceGate = 0, side = 1;
+    for (let i = 4; i < NSM - 8; i++) {
+      const st = CSTYLE[i];
+      sinceGate += STEP;
+      if (st === ST_SLALOM && sinceGate > 24) {
+        sinceGate = 0; side = -side;
+        const u = side * (CW[i] - 2.2);
+        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+        if (!inCorridor(x, z, 2.4)) {
+          const gy = terrainH(x, z);
+          pushTree(tileMDAt(x, z), x, z, gy - 0.15, lerp(0.95, 1.15, rr()), rr());
+          addObstacle(x, z, 0.85);
+        }
+      }
+      // forest bands beside the course
+      if (i % 2 === 0) {
+        for (let sgn = -1; sgn <= 1; sgn += 2) {
+          const wall = sgn < 0 ? CWL[i] : CWR[i];
+          if (wall < 0) continue;
+          const dens = st === ST_SLALOM ? 0.30 : st === ST_OPEN ? 0.52 : 0.44;
+          for (let k = 0; k < 4; k++) {
+            const u = sgn * (CW[i] + 5 + k * 13 + rr() * 9);
+            const x = CX[i] + CRX[i] * u + (rr() - 0.5) * 4;
+            const z = CZ[i] + CRZ[i] * u + (rr() - 0.5) * 4;
+            const n = noise2(x * 0.03, z * 0.03) * 0.5 + 0.5;
+            if (n + rr() * 0.35 < dens + k * 0.06) continue;
+            if (inCorridor(x, z, 2.4)) continue;
+            const gy = terrainH(x, z);
+            if (gy > CY[i] + 26) continue;
+            const sx2 = (terrainH(x + 2.2, z) - terrainH(x - 2.2, z)) / 4.4;
+            const sz2 = (terrainH(x, z + 2.2) - terrainH(x, z - 2.2)) / 4.4;
+            if (sx2 * sx2 + sz2 * sz2 > 0.42) continue;
+            const sc = lerp(0.8, 1.35, rr());
+            pushTree(tileMDAt(x, z), x, z, gy - 0.15, sc, rr());
+            if (Math.abs(u) < CW[i] + 8) addObstacle(x, z, 0.85 * sc);
+          }
+        }
+      }
+      // scattered boulders
+      if (i % 13 === 0 && st !== ST_RIDGE) {
+        const sgn = rr() < 0.5 ? -1 : 1;
+        if ((sgn < 0 ? CWL[i] : CWR[i]) >= 0) {
+          const u = sgn * (CW[i] + 2.5 + rr() * 13);
+          const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+          if (!inCorridor(x, z, 2.8)) {
+            const gy = terrainH(x, z);
+            const rsx = (terrainH(x + 2, z) - terrainH(x - 2, z)) / 4;
+            const rsz = (terrainH(x, z + 2) - terrainH(x, z - 2)) / 4;
+            if (rsx * rsx + rsz * rsz < 0.2) {
+              const sc = lerp(0.7, 1.9, rr());
+              pushRock(tileMDAt(x, z), x, z, gy - 0.45 * sc, sc, (cfg.seed ^ i * 7919) >>> 0);
+              if (Math.abs(u) < CW[i] + 7) addObstacle(x, z, sc * 0.9);
+            }
+          }
+        }
+      }
+      // piste edge stakes (skip in the tree slaloms — trees mark the line).
+      // Near the shortcut a deliberate GAP is left in the stake line: the
+      // only signpost the corridor ever gets.
+      if (i % 5 === 0 && st !== ST_SLALOM) {
+        for (let sgn = -1; sgn <= 1; sgn += 2) {
+          if (SC && sgn === SC.side && Math.abs(i - (SC.entryI + 8)) <= 5) continue; // the gap
+          const u = sgn * (CW[i] + 0.7);
+          const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+          const gy = terrainH(x, z);
+          pushBox(tileMDAt(x, z), x, gy + 0.42, z, 0.13, 0.9, 0.13, 0, 1.0, 0.42, 0.16);
+        }
+      }
+    }
+    // densify the stake line either side of the gap (and resume it past the
+    // gap, into the slalom) so the missing stretch reads as a deliberate
+    // gap and not just "stakes ended here"
+    if (SC) {
+      const gi = SC.entryI + 8;
+      for (let i = Math.max(4, gi - 24); i <= Math.min(NSM - 4, gi + 34); i += 3) {
+        if (Math.abs(i - gi) <= 5) continue;               // the gap itself
+        if (CSTYLE[i] !== ST_SLALOM && i % 5 === 0) continue; // base loop has it
+        const u = SC.side * (CW[i] + 0.7);
+        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+        if (inCorridor(x, z, 1.2)) continue;
+        const gy = terrainH(x, z);
+        pushBox(tileMDAt(x, z), x, gy + 0.42, z, 0.13, 0.9, 0.13, 0, 1.0, 0.42, 0.16);
+      }
+      // line the corridor with real trees: sloppy entry = normal crash rules
+      const rr2 = mulberry32(cfg.seed ^ 0xc0dd);
+      for (let k = NSM + 2; k < NS - 2; k += 2) {
+        for (let sgn = -1; sgn <= 1; sgn += 2) {
+          if (rr2() < 0.25) continue;
+          const u = sgn * (SC.w + 1.9 + rr2() * 1.6);
+          const x = CX[k] + CRX[k] * u + (rr2() - 0.5) * 2;
+          const z = CZ[k] + CRZ[k] * u + (rr2() - 0.5) * 2;
+          // never drop a corridor tree onto the groomed piste
+          if (distToMainLine(x, z, SC.entryI - 10, SC.exitI + 10) < CW[SC.entryI] + 1.6) continue;
+          if (inCorridor(x, z, 0.6)) continue;
+          const gy = terrainH(x, z);
+          const sc = lerp(0.85, 1.25, rr2());
+          pushTree(tileMDAt(x, z), x, z, gy - 0.15, sc, rr2());
+          addObstacle(x, z, 0.8 * sc);
+        }
+      }
+    }
+    // canyon-rim fences along ridge sections (cliff side)
+    let prevPost = null;
+    for (let i = 2; i < NSM - 2; i += 2) {
+      if (CSTYLE[i] !== ST_RIDGE) { prevPost = null; continue; }
+      const sgn = CWL[i] < 0 ? -1 : (CWR[i] < 0 ? 1 : 0);
+      if (!sgn) { prevPost = null; continue; }
+      const u = sgn * (CW[i] + 1.8);
+      const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+      const gy = terrainH(x, z);
+      const md = tileMDAt(x, z);
+      pushBox(md, x, gy + 0.55, z, 0.18, 1.15, 0.18, 0, 0.34, 0.26, 0.19);
+      if (prevPost) {
+        const mx = (x + prevPost[0]) / 2, mz = (z + prevPost[2]) / 2;
+        const ddx = x - prevPost[0], ddz = z - prevPost[2];
+        const len = Math.sqrt(ddx * ddx + ddz * ddz);
+        const yaw = Math.atan2(ddx, ddz);
+        for (let rail = 0; rail < 2; rail++) {
+          const ry = lerp(gy + 0.45, gy + 0.95, rail) + (prevPost[1] - gy) / 2;
+          pushBox(md, mx, ry, mz, 0.09, 0.12, len, yaw, 0.46, 0.36, 0.26);
+        }
+      }
+      prevPost = [x, gy + 0.55, z];
+    }
+  })();
+
+  /* chevron warning signs at every hairpin entry */
+  (function placeChevrons() {
+    let i = 0;
+    while (i < NSM) {
+      if (CSTYLE[i] !== ST_HAIRPIN) { i++; continue; }
+      let j = i; let curvSum = 0;
+      while (j < NSM && CSTYLE[j] === ST_HAIRPIN) { curvSum += W.CCURV[j]; j++; }
+      const turnRight = curvSum > 0;
+      const outer = turnRight ? -1 : 1;
+      for (const off of [-6, Math.floor((j - i) * 0.35)]) {
+        const k = clamp(i + off, 2, NSM - 3);
+        const u = outer * (CW[k] + 3.2);
+        const x = CX[k] + CRX[k] * u, z = CZ[k] + CRZ[k] * u;
+        const gy = terrainH(x, z);
+        const md = tileMDAt(x, z);
+        const ax = CRX[k], az = CRZ[k];
+        const nx = -CDX[k], nz = -CDZ[k];
+        pushBox(md, x - ax * 1.35, gy + 1.0, z - az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+        pushBox(md, x + ax * 1.35, gy + 1.0, z + az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+        const o = [x, gy + 2.0, z];
+        panelBar(md, o, ax, 0, az, 0, 1, 0, -1.62, 0, 1.62, 0, 0.72, 0.125, 0.135, 0.24, nx, 0, nz);
+        const o2 = [x + nx * 0.05, gy + 2.0, z + nz * 0.05];
+        panelBar(md, o2, ax, 0, az, 0, 1, 0, -1.5, 0, 1.5, 0, 0.6, 0.96, 0.30, 0.10, nx, 0, nz);
+        const dir = turnRight ? -1 : 1;
+        for (let cvi = 0; cvi < 3; cvi++) {
+          const cx0 = (cvi - 1) * 0.88 * dir;
+          const o3 = [x + nx * 0.10, gy + 2.0, z + nz * 0.10];
+          panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 - 0.22 * dir, 0.36, cx0 + 0.22 * dir, 0.02, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+          panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 + 0.22 * dir, 0.02, cx0 - 0.22 * dir, -0.34, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+        }
+      }
+      i = j;
+    }
+  })();
+
+  /* checkpoint gates, start arch, finish arch (+ night lanterns, gold trim) */
+  const glowMD = newMD(shadeFlat);          // additive gradient glows
+  let startArch = null;
+  function pushGate(gi, big, checker, isStart) {
+    const w = CW[gi] + 0.8;
+    const lx = CX[gi] - CRX[gi] * w, lz = CZ[gi] - CRZ[gi] * w;
+    const rx = CX[gi] + CRX[gi] * w, rz = CZ[gi] + CRZ[gi] * w;
+    const ly = terrainH(lx, lz), ry = terrainH(rx, rz);
+    const topY = Math.max(ly, ry) + (big ? 5.4 : 4.4);
+    const md = tileMDAt(CX[gi], CZ[gi]);
+    const yaw = Math.atan2(CDX[gi], CDZ[gi]);
+    for (const [px, pz, py] of [[lx, lz, ly], [rx, rz, ry]]) {
+      if (big) { // candy-stripe poles
+        const segs = 5, h = topY - py;
+        for (let s2 = 0; s2 < segs; s2++) {
+          const red = s2 % 2 === 0;
+          pushBox(md, px, py + h * (s2 + 0.5) / segs, pz, 0.34, h / segs, 0.34, yaw,
+            red ? 0.92 : 0.97, red ? 0.22 : 0.96, red ? 0.20 : 0.94);
+        }
+      } else {
+        pushBox(md, px, (py + topY) / 2, pz, 0.26, topY - py, 0.26, yaw, 0.14, 0.66, 0.84);
+      }
+      // NIGHT RIDGE: small lanterns on the checkpoint gate poles — a warm
+      // baked ember + an additive gradient glow. No lights, no shadowBlur.
+      if (cfg.night && !big && !isStart) {
+        const lyt = topY - 1.05;
+        const lmd = tileMDAt(px, pz);
+        pushBox(lmd, px, lyt, pz, 0.30, 0.38, 0.30, yaw, 0.24, 0.20, 0.16);   // housing
+        const emb = newMD(shadeFlat);
+        pushBox(emb, px, lyt, pz, 0.20, 0.24, 0.20, yaw, 1.0, 0.78, 0.34);    // ember
+        lmd.p.push(...emb.p); lmd.c.push(...emb.c);
+        pushGlowQuad(glowMD, px, lyt, pz, 1, 0, 0, 0, 1, 0, 1.1, 0.52, 0.32, 0.10);
+        pushGlowQuad(glowMD, px, lyt, pz, 0, 0, 1, 0, 1, 0, 1.1, 0.52, 0.32, 0.10);
+      }
+    }
+    // banner bar
+    const span = w * 2 + 0.6;
+    const bx = (lx + rx) / 2, bz = (lz + rz) / 2;
+    pushBox(md, bx, topY + 0.55, bz, 0.3, 1.15, span, yaw + Math.PI / 2, 0.125, 0.135, 0.24);
+    pushBox(md, bx, topY - 0.02, bz, 0.32, 0.14, span, yaw + Math.PI / 2, 1.0, 0.83, 0.24);
+    if (checker) { // finish checker squares proud of the banner
+      const n = Math.floor(span / 1.1);
+      for (let s2 = 0; s2 < n; s2++) {
+        const t = (s2 + 0.5) / n - 0.5;
+        const sqx = bx + CRX[gi] * t * span, sqz = bz + CRZ[gi] * t * span;
+        const up = s2 % 2 === 0;
+        pushBox(md, sqx, topY + (up ? 0.80 : 0.32), sqz, 0.36, 0.44, 0.46, yaw + Math.PI / 2,
+          up ? 0.97 : 0.10, up ? 0.97 : 0.11, up ? 0.96 : 0.18);
+      }
+    } else { // little yellow pennants under checkpoint banners
+      for (let s2 = -1; s2 <= 1; s2++) {
+        const px2 = bx + CRX[gi] * s2 * span * 0.28, pz2 = bz + CRZ[gi] * s2 * span * 0.28;
+        pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
+          px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
+          px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, CDX[gi], 0, CDZ[gi]);
+        pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
+          px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
+          px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, -CDX[gi], 0, -CDZ[gi]);
+      }
+    }
+    if (isStart) startArch = { lx, lz, ly, rx, rz, ry, topY, yaw, span, bx, bz, rxv: CRX[gi], rzv: CRZ[gi] };
+  }
+  for (const gi of GATES) pushGate(gi, false, false, false);
+  pushGate(3, false, false, true);            // start gate
+  pushGate(FINISH_I, true, true, false);      // finish arch
+
+  /* gold-trim accents for the start arch — a separate small mesh, shown
+     only while the saved medal for this mountain is GOLD */
+  {
+    const a = startArch;
+    const tmd = newMD(shadeFlat);
+    const gr = 0.98, gg = 0.80, gb = 0.24;
+    // pole caps
+    pushBox(tmd, a.lx, a.topY + 1.22, a.lz, 0.44, 0.20, 0.44, a.yaw, gr, gg, gb);
+    pushBox(tmd, a.rx, a.topY + 1.22, a.rz, 0.44, 0.20, 0.44, a.yaw, gr, gg, gb);
+    // thin gleam along the banner's top edge
+    pushBox(tmd, a.bx, a.topY + 1.16, a.bz, 0.22, 0.10, a.span, a.yaw + Math.PI / 2, gr, gg, gb);
+    // two slim vertical trims down the poles
+    pushBox(tmd, a.lx, (a.ly + a.topY) / 2, a.lz, 0.08, a.topY - a.ly, 0.34, a.yaw, 0.82, 0.66, 0.20);
+    pushBox(tmd, a.rx, (a.ry + a.topY) / 2, a.rz, 0.08, a.topY - a.ry, 0.34, a.yaw, 0.82, 0.66, 0.20);
+    const trim = md2mesh(tmd);
+    trim.matrixAutoUpdate = false; trim.updateMatrix();
+    trim.visible = false;
+    scene.add(trim);
+    W.goldTrim = trim;
+  }
+
+  /* SNOWMAN — three balls, coal eyes, stick arms, just off the fastest
+     line on the final straight. Skiing through it is a poof, never a crash. */
+  {
+    const si = FINISH_I - 40;
+    const u = cfg.smSide * 3.4;
+    const x = CX[si] + CRX[si] * u, z = CZ[si] + CRZ[si] * u;
+    const gy = terrainH(x, z);
+    const smd = newMD(cfg.shade);
+    pushBall(smd, x, gy + 0.62, z, 0.72, 0.97, 0.975, 1.0);
+    pushBall(smd, x, gy + 1.62, z, 0.52, 0.96, 0.965, 1.0);
+    pushBall(smd, x, gy + 2.38, z, 0.36, 0.97, 0.975, 1.0);
+    // face uphill toward the approaching skier
+    const fx = -CDX[si], fz = -CDZ[si];
+    const ex = CRX[si] * 0.14, ez = CRZ[si] * 0.14;
+    pushBox(smd, x + fx * 0.31 - ex, gy + 2.46, z + fz * 0.31 - ez, 0.07, 0.07, 0.07, 0, 0.07, 0.07, 0.09);
+    pushBox(smd, x + fx * 0.31 + ex, gy + 2.46, z + fz * 0.31 + ez, 0.07, 0.07, 0.07, 0, 0.07, 0.07, 0.09);
+    // stick arms
+    const yawA = Math.atan2(CDX[si], CDZ[si]);
+    pushBox(smd, x - CRX[si] * 0.75, gy + 1.80, z - CRZ[si] * 0.75, 1.0, 0.06, 0.06, yawA + Math.PI / 2, 0.32, 0.24, 0.15);
+    pushBox(smd, x + CRX[si] * 0.75, gy + 1.72, z + CRZ[si] * 0.75, 1.0, 0.06, 0.06, yawA + Math.PI / 2 + 0.3, 0.32, 0.24, 0.15);
+    const mesh = md2mesh(smd);
+    mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+    mesh.visible = false;
+    scene.add(mesh);
+    W.snowman = { x, z, y: gy, r: 1.35, mesh, hit: false };
+  }
+
+  /* lantern glow mesh (night only; empty md renders nothing on ALPENGLOW) */
+  if (glowMD.p.length) {
+    const gm = md2mesh(glowMD, glowMat);
+    gm.matrixAutoUpdate = false; gm.updateMatrix();
+    gm.visible = false;
+    scene.add(gm);
+    W.glowMesh = gm;
+  } else W.glowMesh = null;
+
+  /* ── turn tile MDs into meshes (one merged mesh per tile) ── */
+  const tiles = [];
+  for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
+    const md = tileMDs[tz * TGW + tx];
+    if (!md || md.p.length === 0) continue;
+    const mesh = md2mesh(md);
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    mesh.visible = false;
+    scene.add(mesh);
+    tiles.push({ mesh, cx: (TGX0 + tx + 0.5) * TILE, cz: (TGZ0 + tz + 0.5) * TILE });
+  }
+  tileMDs.length = 0;
+  W.tiles = tiles;
+
+  /* obstacle CSR hash for per-tick collision queries */
+  {
+    const ONUM = obsX.length;
+    const OX = new Float32Array(obsX), OZ = new Float32Array(obsZ), OR = new Float32Array(obsR);
+    const OCELL = 12;
+    const OW = Math.ceil((W.HX1 - W.HX0) / OCELL), OH = Math.ceil((W.HZ1 - W.HZ0) / OCELL);
+    const start = new Int32Array(OW * OH + 1);
+    const counts = new Int32Array(OW * OH);
+    const cellOf = i => {
+      const cx = clamp(Math.floor((OX[i] - W.HX0) / OCELL), 0, OW - 1);
+      const cz = clamp(Math.floor((OZ[i] - W.HZ0) / OCELL), 0, OH - 1);
+      return cz * OW + cx;
+    };
+    for (let i = 0; i < ONUM; i++) counts[cellOf(i)]++;
+    let acc = 0;
+    for (let c = 0; c < OW * OH; c++) { start[c] = acc; acc += counts[c]; }
+    start[OW * OH] = acc;
+    const items = new Int32Array(acc);
+    const cursor = start.slice(0, OW * OH);
+    for (let i = 0; i < ONUM; i++) { const c = cellOf(i); items[cursor[c]++] = i; }
+    W.obs = { n: ONUM, X: OX, Z: OZ, R: OR, CELL: OCELL, W: OW, H: OH, start, items, X0: W.HX0, Z0: W.HZ0 };
+  }
+
+  /* ═════ sky, sun/moon, clouds, distant peaks (per mountain) ═════ */
+  const skyGroup = new THREE.Group();
+  skyGroup.visible = false;
+  scene.add(skyGroup);
+  (function buildSky() {
+    const geo = new THREE.SphereGeometry(1100, 20, 12);
+    const pos = geo.getAttribute('position');
+    const cols = new Float32Array(pos.count * 3);
+    const stops = cfg.skyStops;
+    for (let i = 0; i < pos.count; i++) {
+      const t = pos.getY(i) / 1100;
+      let a = stops[0], b = stops[stops.length - 1];
+      for (let s2 = 0; s2 < stops.length - 1; s2++) {
+        if (t >= stops[s2][0] && t <= stops[s2 + 1][0]) { a = stops[s2]; b = stops[s2 + 1]; break; }
+      }
+      const k = smoothstep((t - a[0]) / (b[0] - a[0] || 1));
+      cols[i * 3] = lerp(a[1], b[1], k); cols[i * 3 + 1] = lerp(a[2], b[2], k); cols[i * 3 + 2] = lerp(a[3], b[3], k);
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
+    const dome = new THREE.Mesh(geo, mat);
+    dome.renderOrder = -10;
+    dome.frustumCulled = false;
+    skyGroup.add(dome);
+    // the low sun (or the moon) + soft halo
+    const sunDist = 980;
+    const sx = cfg.sunDir[0] * sunDist, sy = cfg.sunDir[1] * sunDist, sz = cfg.sunDir[2] * sunDist;
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(cfg.sunR, 20),
+      new THREE.MeshBasicMaterial({ color: cfg.sunCol, fog: false, depthWrite: false }));
+    disc.position.set(sx, sy, sz); disc.lookAt(0, 0, 0); disc.renderOrder = -9;
+    skyGroup.add(disc);
+    const halo = new THREE.Mesh(new THREE.CircleGeometry(cfg.haloR, 20),
+      new THREE.MeshBasicMaterial({ color: cfg.haloCol, fog: false, depthWrite: false, transparent: true, opacity: cfg.haloOp }));
+    halo.position.set(sx * 0.995, sy * 0.995, sz * 0.995); halo.lookAt(0, 0, 0); halo.renderOrder = -9;
+    skyGroup.add(halo);
+    // floating low-poly clouds
+    const cmd = newMD(cfg.shade);
+    const rr = mulberry32(cfg.seed ^ 0xc10d);
+    for (let c = 0; c < 12; c++) {
+      const ang = rr() * Math.PI * 2, dist = lerp(380, 850, rr());
+      const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
+      const cy = lerp(130, 330, rr());
+      const blobs = 3 + Math.floor(rr() * 3);
+      for (let b = 0; b < blobs; b++) {
+        const bx = cx + (rr() - 0.5) * 55, by = cy + (rr() - 0.5) * 9, bz = cz + (rr() - 0.5) * 34;
+        const sxr = lerp(13, 30, rr()), syr = lerp(3.5, 6.5, rr()), szr = lerp(9, 20, rr());
+        for (let f = 0; f < rockTmpl.length; f += 9) {
+          const P = [];
+          for (let v = 0; v < 3; v++) {
+            P.push([bx + rockTmpl[f + v * 3] * sxr, by + rockTmpl[f + v * 3 + 1] * syr, bz + rockTmpl[f + v * 3 + 2] * szr]);
+          }
+          const my = (P[0][1] + P[1][1] + P[2][1]) / 3 - by;
+          pushTri(cmd, P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
+            cfg.cloudCol[0], cfg.cloudCol[1], cfg.cloudCol[2],
+            (P[0][0] + P[1][0] + P[2][0]) / 3 - bx, my, (P[0][2] + P[1][2] + P[2][2]) / 3 - bz);
+        }
+      }
+    }
+    const clouds = md2mesh(cmd, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+    clouds.renderOrder = -8;
+    clouds.frustumCulled = false;
+    skyGroup.add(clouds);
+
+    if (cfg.night) {
+      // static star field — one Points draw call
+      const rs = mulberry32(cfg.seed ^ 0x57a7);
+      const NSTAR = 240;
+      const sp = new Float32Array(NSTAR * 3);
+      for (let i = 0; i < NSTAR; i++) {
+        const az = rs() * Math.PI * 2, el = 0.06 + rs() * rs() * 1.35;
+        const rr3 = 1020;
+        sp[i * 3] = Math.cos(az) * Math.cos(el) * rr3;
+        sp[i * 3 + 1] = Math.sin(el) * rr3;
+        sp[i * 3 + 2] = Math.sin(az) * Math.cos(el) * rr3;
+      }
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+      const stars = new THREE.Points(sg, new THREE.PointsMaterial({
+        color: 0xdde6ff, size: 2.2, sizeAttenuation: false, fog: false,
+        transparent: true, opacity: 0.85, depthWrite: false,
+      }));
+      stars.renderOrder = -9;
+      stars.frustumCulled = false;
+      skyGroup.add(stars);
+
+      // AURORA — one static vertex-colored additive ribbon above the
+      // ridgeline; animated ONLY by whole-mesh transform/opacity.
+      const NCOL = 36;
+      const ap = new Float32Array(NCOL * 2 * 3);
+      const acl = new Float32Array(NCOL * 2 * 3);
+      for (let i = 0; i < NCOL; i++) {
+        const t = i / (NCOL - 1);
+        const az = -0.62 + t * 1.0;                 // radians around +z ahead
+        const rr3 = 940;
+        const x = Math.sin(az) * rr3, z = Math.cos(az) * rr3;
+        const yb = 285 + 55 * Math.sin(t * 4.1) + 25 * Math.sin(t * 9.3 + 1.7);
+        const h = 130 + 55 * Math.sin(t * 6.6 + 0.6);
+        ap[(i * 2) * 3] = x; ap[(i * 2) * 3 + 1] = yb; ap[(i * 2) * 3 + 2] = z;
+        ap[(i * 2 + 1) * 3] = x; ap[(i * 2 + 1) * 3 + 1] = yb + h; ap[(i * 2 + 1) * 3 + 2] = z;
+        const inten = Math.pow(Math.sin(Math.PI * t), 0.7) * (0.75 + 0.25 * Math.sin(t * 11.0));
+        acl[(i * 2) * 3] = 0.10 * inten; acl[(i * 2) * 3 + 1] = 0.78 * inten; acl[(i * 2) * 3 + 2] = 0.50 * inten;
+        acl[(i * 2 + 1) * 3] = 0.16 * inten * 0.25; acl[(i * 2 + 1) * 3 + 1] = 0.10 * inten * 0.25; acl[(i * 2 + 1) * 3 + 2] = 0.42 * inten * 0.25;
+      }
+      const idx = [];
+      for (let i = 0; i < NCOL - 1; i++) {
+        const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+        idx.push(a, c, b, b, c, d);
+      }
+      const ag = new THREE.BufferGeometry();
+      ag.setAttribute('position', new THREE.BufferAttribute(ap, 3));
+      ag.setAttribute('color', new THREE.BufferAttribute(acl, 3));
+      ag.setIndex(idx);
+      const aurora = new THREE.Mesh(ag, new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.8, fog: false,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }));
+      aurora.renderOrder = -8;
+      aurora.frustumCulled = false;
+      skyGroup.add(aurora);
+
+      // ONE pooled shooting star — transform-only animation
+      const star = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 30),
+        new THREE.MeshBasicMaterial({
+          color: 0xcfe0ff, fog: false, transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        }));
+      star.visible = false;
+      star.frustumCulled = false;
+      skyGroup.add(star);
+      W.extras = { aurora, star, starT: 12 + Math.random() * 14, starActive: 0 };
+    } else W.extras = null;
+  })();
+  W.sky = skyGroup;
+
+  // distant peak backdrop — world-fixed, pre-hazed toward the fog color
+  (function buildPeaks() {
+    const md = newMD(cfg.shade);
+    const rr = mulberry32(cfg.seed ^ 0x9ea1);
+    const fogc = cfg.fog;
+    const PEAK_CLEAR = 130;
+    function onCourse(px, pz, rad) {
+      const r2 = (rad * 1.3 + PEAK_CLEAR) * (rad * 1.3 + PEAK_CLEAR);
+      for (let i = 0; i < NSM; i++) {
+        const dx = CX[i] - px, dz = CZ[i] - pz;
+        if (dx * dx + dz * dz < r2) return true;
+      }
+      return false;
+    }
+    W.peaks = [];
+    for (let k = 0; k < 14; k++) {
+      const ci = Math.floor((k / 14) * (NSM - 1));
+      const side = k % 2 === 0 ? -1 : 1;
+      let dist = 0, px = 0, pz = 0, rad = 0, h = 0, placed = false;
+      for (let tr = 0; tr < 24 && !placed; tr++) {
+        dist = lerp(420, 700, rr()) + tr * 30;
+        px = CX[ci] + CRX[ci] * side * dist + (rr() - 0.5) * 200;
+        pz = CZ[ci] + CRZ[ci] * side * dist + (rr() - 0.5) * 200;
+        rad = lerp(150, 280, rr()); h = lerp(170, 330, rr());
+        placed = !onCourse(px, pz, rad);
+      }
+      if (!placed) continue; // rather one fewer peak than a blindfold on the piste
+      const baseY = CY[ci] - 40;
+      const haze = lerp(0.50, 0.72, Math.min(1, (dist - 420) / 280));
+      W.peaks.push({ x: px, z: pz, r: rad * 1.3 });
+      const jitters = [];
+      for (let s2 = 0; s2 < 10; s2++) jitters.push(lerp(0.7, 1.3, rr()));
+      const tmp = newMD(cfg.shade);
+      pushCone(tmp, px, baseY, pz, rad, h, 7, cfg.peakCol[0], cfg.peakCol[1], cfg.peakCol[2], i2 => jitters[i2 % 10]);
+      for (let ci2 = 0; ci2 < tmp.c.length; ci2 += 3) {
+        tmp.c[ci2] = lerp(tmp.c[ci2], fogc[0], haze);
+        tmp.c[ci2 + 1] = lerp(tmp.c[ci2 + 1], fogc[1], haze);
+        tmp.c[ci2 + 2] = lerp(tmp.c[ci2 + 2], fogc[2], haze);
+      }
+      md.p.push(...tmp.p); md.c.push(...tmp.c);
+    }
+    const peaks = md2mesh(md, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+    peaks.renderOrder = -7;
+    peaks.visible = false;
+    scene.add(peaks);
+    W.peaksMesh = peaks;
+  })();
+
+  /* static dumps for the harness (data a player can see) */
+  {
+    const c = [];
+    for (let i = 0; i < NSM; i += 3) {
+      c.push({ i, s: i * STEP, x: CX[i], y: CY[i], z: CZ[i], curv: W.CCURV[i], w: CW[i], style: CSTYLE[i], ramp: CRAMP[i] });
+    }
+    const o = [];
+    for (let i = 0; i < W.obs.n; i++) o.push({ x: W.obs.X[i], z: W.obs.Z[i], r: W.obs.R[i] });
+    const sc = SC ? {
+      entryS: SC.entryI * STEP, exitS: SC.exitI * STEP, w: SC.w,
+      pts: Array.from({ length: NS - NSM }, (_, k) => ({ x: CX[NSM + k], z: CZ[NSM + k] })),
+    } : null;
+    W.dump = {
+      course: c, obstacles: o,
+      gates: { gates: GATES.map(g => g * STEP), finish: FINISH_I * STEP, len: W.COURSE_LEN },
+      shortcut: sc,
+      snowman: { x: W.snowman.x, z: W.snowman.z, s: (FINISH_I - 40) * STEP },
+      peaks: W.peaks,
+    };
+  }
+}
+
+/* ═════════════════ build BOTH mountains ═════════════════ */
+const WORLDS = {};
+for (const id of ['alp', 'nr']) {
+  const Wd = buildCourseData(MTN[id]);
+  buildWorldScene(Wd);
+  WORLDS[id] = Wd;
+}
 
 /* ═════════════════ the skier ═════════════════ */
 const skier = new THREE.Group();
@@ -1338,7 +1857,7 @@ const SNOWFALL_N = LOWFX ? 0 : 420;
 let snowfall = null;
 const snowPos = new Float32Array(Math.max(1, SNOWFALL_N) * 3);
 if (SNOWFALL_N > 0) {
-  const rr = mulberry32(SEED ^ 0xf1a4e5);
+  const rr = mulberry32(0xf1a4e5);
   for (let i = 0; i < SNOWFALL_N; i++) {
     snowPos[i * 3] = (rr() - 0.5) * 90;
     snowPos[i * 3 + 1] = rr() * 46;
@@ -1355,6 +1874,28 @@ if (SNOWFALL_N > 0) {
   scene.add(snowfall);
 }
 
+/* ═══════════ current-mountain aliases (assigned by setMountain) ═══════════
+   The physics/HUD below always reads these — switching mountains is just
+   repointing them at the other prebuilt world. */
+const STEP = 3;
+let W = null;
+let NSM = 0, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE;
+let GATES, RAMPS, FINISH_I;
+let terrainInfo, terrainH, terrainGrad;
+let OBS = null, MEDALS = null, BEST_KEY = '', MP = null;
+let best = null;
+
+/* per-mountain bests, loaded once */
+for (const id of ['alp', 'nr']) {
+  const Wd = WORLDS[id];
+  let b = null;
+  try { b = JSON.parse(localStorage.getItem(Wd.cfg.bestKey)); } catch (e) { b = null; }
+  if (b && typeof b.time !== 'number') b = null;
+  Wd.best = b;
+}
+let lastMtnId = 'alp';
+try { const m = localStorage.getItem(MTN_KEY); if (m && WORLDS[m]) lastMtnId = m; } catch (e) {}
+
 /* ═════════════════ HUD (DOM; text updated only on change) ═════════════════ */
 const el = id => document.getElementById(id);
 const timeText = el('timeText'), speedNum = el('speedNum'), needle = el('needle');
@@ -1365,17 +1906,19 @@ const countdownEl = el('countdownEl'), fadeWhite = el('fadeWhite');
 const titleBest = el('titleBest');
 
 const PROF_W = 268, PROF_H = 56;
-const profPX = new Float32Array(NS), profPY = new Float32Array(NS);
-(function drawProfile() {
+let profPX = null, profPY = null;
+// redrawn once per MOUNTAIN (not once per boot): the profile is the
+// active course's silhouette
+function drawProfile() {
   const ctx = el('profileCanvas').getContext('2d');
+  profPX = new Float32Array(NSM); profPY = new Float32Array(NSM);
   let yMin = 1e9, yMax = -1e9;
-  for (let i = 0; i < NS; i++) { if (CY[i] < yMin) yMin = CY[i]; if (CY[i] > yMax) yMax = CY[i]; }
-  const px = i => 3 + (i / (NS - 1)) * (PROF_W - 6);
+  for (let i = 0; i < NSM; i++) { if (CY[i] < yMin) yMin = CY[i]; if (CY[i] > yMax) yMax = CY[i]; }
+  const px = i => 3 + (i / (NSM - 1)) * (PROF_W - 6);
   const py = i => 6 + (1 - (CY[i] - yMin) / (yMax - yMin)) * (PROF_H - 14);
-  for (let i = 0; i < NS; i++) { profPX[i] = px(i); profPY[i] = py(i); }
+  for (let i = 0; i < NSM; i++) { profPX[i] = px(i); profPY[i] = py(i); }
   ctx.fillStyle = '#171930';
   ctx.fillRect(0, 0, PROF_W, PROF_H);
-  // sector dividers + numbers
   ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = '8px monospace'; ctx.lineWidth = 1;
   GATES.forEach((gi, n) => {
@@ -1383,28 +1926,24 @@ const profPX = new Float32Array(NS), profPY = new Float32Array(NS);
     ctx.fillText(String(n + 1), px(gi) - 8, PROF_H - 5);
   });
   ctx.fillText('4', px(FINISH_I) - 8, PROF_H - 5);
-  // the mountain line
   ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(px(0), py(0));
-  for (let i = 2; i < NS; i += 2) ctx.lineTo(px(i), py(i));
+  for (let i = 2; i < NSM; i += 2) ctx.lineTo(px(i), py(i));
   ctx.stroke();
-  // fill under the line, faint
-  ctx.lineTo(px(NS - 1), PROF_H); ctx.lineTo(px(0), PROF_H); ctx.closePath();
+  ctx.lineTo(px(NSM - 1), PROF_H); ctx.lineTo(px(0), PROF_H); ctx.closePath();
   ctx.fillStyle = 'rgba(255,210,62,0.10)'; ctx.fill();
-})();
+}
 (function drawGauge() {
   const ctx = el('gaugeCanvas').getContext('2d');
   const cx = 79, cy = 78, sweep = 256; // deg, symmetric about straight-up
   const a2r = a => (a - 90) * Math.PI / 180;
   ctx.clearRect(0, 0, 190, 158);
-  // arc face
   ctx.beginPath();
   ctx.arc(cx, cy, 58, a2r(-sweep / 2), a2r(sweep / 2));
   ctx.strokeStyle = '#171930'; ctx.lineWidth = 26; ctx.stroke();
   ctx.beginPath();
   ctx.arc(cx, cy, 58, a2r(-sweep / 2), a2r(sweep / 2));
   ctx.strokeStyle = '#2b2f52'; ctx.lineWidth = 22; ctx.stroke();
-  // ticks every 10 km/h, majors every 40
   for (let s2 = 0; s2 <= 160; s2 += 10) {
     const a = a2r(-sweep / 2 + (s2 / 160) * sweep);
     const major = s2 % 40 === 0;
@@ -1420,7 +1959,6 @@ const profPX = new Float32Array(NS), profPY = new Float32Array(NS);
       ctx.fillText(String(s2), cx + Math.cos(a) * 38, cy + Math.sin(a) * 38 + 3);
     }
   }
-  // needle hub
   ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2);
   ctx.fillStyle = '#171930'; ctx.fill();
   ctx.lineWidth = 3; ctx.strokeStyle = '#ffd23e'; ctx.stroke();
@@ -1439,7 +1977,8 @@ function splitPop(text, cls) {
   splitPopEl.classList.add('show');
 }
 const trickPopEl = el('trickPop');
-function showTrickPop() {
+function showTrickPop(text) {
+  trickPopEl.textContent = text;
   trickPopEl.classList.remove('show');
   void trickPopEl.offsetWidth;
   trickPopEl.classList.add('show');
@@ -1452,6 +1991,9 @@ function fmtTime(t) {
 function fmtDelta(d) {
   const sign = d < 0 ? '-' : '+';
   return sign + Math.abs(d).toFixed(2);
+}
+function medalFor(t, med) {
+  return t <= med.gold ? 'GOLD' : t <= med.silver ? 'SILVER' : t <= med.bronze ? 'BRONZE' : '';
 }
 
 /* ═════════════════ audio — all WebAudio synth, lazy context ═════════════════ */
@@ -1466,13 +2008,11 @@ function ensureAudio() {
   noiseBuf = ac.createBuffer(1, sr * 2, sr);
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  // wind loop — gain/filter ride the speed
   const windSrc = ac.createBufferSource(); windSrc.buffer = noiseBuf; windSrc.loop = true;
   windFilt = ac.createBiquadFilter(); windFilt.type = 'bandpass'; windFilt.frequency.value = 300; windFilt.Q.value = 0.6;
   windGain = ac.createGain(); windGain.gain.value = 0;
   windSrc.connect(windFilt).connect(windGain).connect(master);
   windSrc.start();
-  // carve shush loop
   const carveSrc = ac.createBufferSource(); carveSrc.buffer = noiseBuf; carveSrc.loop = true;
   const carveFilt = ac.createBiquadFilter(); carveFilt.type = 'highpass'; carveFilt.frequency.value = 1700;
   carveGain = ac.createGain(); carveGain.gain.value = 0;
@@ -1517,6 +2057,7 @@ const sfx = {
   trick: () => { noiseHit(0.35, 0.12, 1200, 5200); tone(520, 0.28, 'triangle', 0.05, 820); },
   trickDone: () => tone(1046, 0.09, 'triangle', 0.06),
   trickLand: () => { tone(660, 0.10, 'triangle', 0.08, 990); tone(880, 0.16, 'triangle', 0.08, 1318, 0.08); },
+  whumpf: () => { noiseHit(0.30, 0.17, 420, 70); tone(58, 0.20, 'sine', 0.11); },
   count: n => tone(n === 0 ? 880 : 440, n === 0 ? 0.3 : 0.12, 'square', 0.06),
   go: () => { tone(660, 0.16, 'square', 0.07); tone(880, 0.3, 'square', 0.07, null, 0.1); },
   fanfare: () => {
@@ -1533,13 +2074,16 @@ const sfx = {
 const AC = window.ArcadeController || null;
 const PAD0 = AC ? AC.pad(0) : null;
 const held = { kSteerL: false, kSteerR: false, kTuck: false, kBrake: false, tSteer: 0, tTuck: false, tBrake: false };
-const edges = { confirm: false, pause: false, up: false, down: false, back: false, any: false, jump: false };
-let prevLy = 0;
+const edges = { confirm: false, pause: false, up: false, down: false, left: false, right: false,
+                back: false, any: false, jump: false, selCard: -1 };
+let prevLy = 0, prevLx = 0, padLyRaw = 0;
 function clearEdges() {
-  edges.confirm = edges.pause = edges.up = edges.down = edges.back = edges.any = edges.jump = false;
+  edges.confirm = edges.pause = edges.up = edges.down = edges.left = edges.right =
+    edges.back = edges.any = edges.jump = false;
+  edges.selCard = -1;
 }
 // filled every frame from all sources; sim reads these
-const inp = { steer: 0, steerTarget: 0, tuck: false, brake: false };
+const inp = { steer: 0, steerTarget: 0, tuck: false, brake: false, trickX: 0, trickY: 0 };
 
 window.addEventListener('keydown', e => {
   const k = e.key;
@@ -1558,6 +2102,8 @@ window.addEventListener('keydown', e => {
     if (k === 'Escape' || k === 'p' || k === 'P') edges.pause = true;
     if (k === 'ArrowUp' || k === 'w' || k === 'W') edges.up = true;
     if (k === 'ArrowDown' || k === 's' || k === 'S') edges.down = true;
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') edges.left = true;
+    if (k === 'ArrowRight' || k === 'd' || k === 'D') edges.right = true;
     if (k === 'Backspace') edges.back = true;
   }
   if (k === 'ArrowLeft' || k === 'a' || k === 'A') held.kSteerL = true;
@@ -1572,7 +2118,7 @@ window.addEventListener('keyup', e => {
   if (k === 'ArrowDown' || k === 'z' || k === 'Z') held.kTuck = false;
   if (k === 'ArrowUp') held.kBrake = false;
 });
-// touch: screen halves steer, corner buttons tuck/brake
+// touch: screen halves steer, corner buttons tuck/brake; select cards tap
 (function touchSetup() {
   const bind = (id, on, off) => {
     const n = el(id);
@@ -1586,6 +2132,13 @@ window.addEventListener('keyup', e => {
   bind('tbtnBrake', () => { held.tBrake = true; }, () => { held.tBrake = false; });
   bind('tbtnJump', () => { edges.jump = true; }, () => {});
   el('tbtnPause').addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); edges.pause = true; }, { passive: false });
+  // mountain cards: tap selects, tap again confirms
+  for (const i of [0, 1]) {
+    el('mcard' + i).addEventListener('touchstart', e => {
+      e.preventDefault(); ensureAudio();
+      if (state === S_SELECT) edges.selCard = i;
+    }, { passive: false });
+  }
   // tap anywhere = confirm on title/finish; fallback input-touch class if the
   // controller lib didn't load (it normally handles the body class)
   window.addEventListener('touchstart', () => {
@@ -1602,7 +2155,7 @@ if (AC) {
   });
 }
 function pollPad() {
-  if (!PAD0 || !PAD0.connected) return 0;
+  if (!PAD0 || !PAD0.connected) { padLyRaw = 0; return 0; }
   let steer = PAD0.axis('lx');
   if (PAD0.button('left')) steer -= 1;
   if (PAD0.button('right')) steer += 1;
@@ -1612,15 +2165,28 @@ function pollPad() {
   if (PAD0.justPressed('start')) edges.pause = true;
   if (PAD0.justPressed('up')) edges.up = true;
   if (PAD0.justPressed('down')) edges.down = true;
+  if (PAD0.justPressed('left')) edges.left = true;
+  if (PAD0.justPressed('right')) edges.right = true;
   const ly = PAD0.axis('ly');
   if (ly < -0.6 && prevLy >= -0.6) edges.up = true;
   if (ly > 0.6 && prevLy <= 0.6) edges.down = true;
   prevLy = ly;
+  padLyRaw = ly;
+  const lx = PAD0.axis('lx');
+  if (lx < -0.6 && prevLx >= -0.6) edges.left = true;
+  if (lx > 0.6 && prevLx <= 0.6) edges.right = true;
+  prevLx = lx;
   return steer;
 }
 function gatherInput() {
   const padSteer = pollPad();
   let t = padSteer + held.tSteer + (held.kSteerL ? -1 : 0) + (held.kSteerR ? 1 : 0);
+  // RAW stick direction — the trick chooser reads the player's actual push
+  // (left = spin left) before the screen-direction negation below
+  inp.trickX = clamp(t, -1, 1);
+  let ty = padLyRaw + (held.kBrake ? -1 : 0) +
+    ((PAD0 && PAD0.connected && PAD0.button('up')) ? -1 : 0);
+  inp.trickY = clamp(ty, -1, 1);
   // Screen-direction fix: the camera rides behind the skier and in this
   // right-handed y-up world +heading turns toward screen-LEFT — so the raw
   // input (+1 = player pushed right) is negated ONCE here at the source.
@@ -1631,17 +2197,23 @@ function gatherInput() {
 }
 
 /* ═════════════════ game state + physics ═════════════════ */
-const S_TITLE = 'title', S_COUNT = 'countdown', S_RUN = 'run', S_PAUSE = 'pause', S_FINISH = 'finish';
+const S_TITLE = 'title', S_SELECT = 'select', S_COUNT = 'countdown', S_RUN = 'run', S_PAUSE = 'pause', S_FINISH = 'finish';
 let state = S_TITLE;
 let TICK = 0;
+
+/* trick catalogue — chosen by the stick at the moment west is pressed */
+const TK_BACK = 0, TK_SPIN_L = 1, TK_SPIN_R = 2, TK_FRONT = 3;
+const TRICK_NAMES = ['BACKFLIP', '360 L', '360 R', 'FRONT FLIP'];
+const TRICK_DISP = ['FLIP', '360', '360', 'F-FLIP'];
 
 const P = {
   x: 0, y: 0, z: 0, heading: 0, v: 0, vy: 0,
   air: false, crashT: 0, wobbleT: 0, invulnT: 0, stuckT: 0,
   curI: 2, s: 0, u: 0, grade: 0, latSlope: 0,
   launchHeading: 0, groundVy: 0,
-  trickT: 0, tricksDone: 0, hopAir: false,
+  trickT: 0, trickType: 0, airN: 0, hopAir: false,
 };
+P.airTypes = new Int8Array(8);          // completed tricks THIS air
 let lastGateIdx = 0;           // 0=start, 1..3 gates
 let timerStartTick = -1, finalTime = 0, runTime = 0;
 let sectorStartTime = 0;
@@ -1649,15 +2221,15 @@ let curSectors = [0, 0, 0, 0];
 let cdT = 0, cdShown = -1;
 let finishShowT = 0;
 let pauseSel = 0, pausedFrom = S_RUN;
+let selectSel = 0;
 let respawnFadeT = 0;
-
-let best = null;
-try { best = JSON.parse(localStorage.getItem(BEST_KEY)); } catch (e) { best = null; }
-if (best && typeof best.time !== 'number') best = null;
+let lastTrickName = '';        // telemetry: most recent trick started
+let lastBoostPct = 0;          // telemetry: landing boost % of last landing
+let smHitThisRun = false;      // telemetry: snowman poofed this run
 
 function setBodyState(s2) {
   const cls = document.body.classList;
-  cls.remove('st-title', 'st-count', 'st-run', 'st-pause', 'st-finish');
+  cls.remove('st-title', 'st-select', 'st-count', 'st-run', 'st-pause', 'st-finish');
   cls.add('st-' + (s2 === S_COUNT ? 'count' : s2));
 }
 
@@ -1667,7 +2239,7 @@ function placeAtSample(i) {
   P.heading = Math.atan2(CDX[i], CDZ[i]);
   P.y = terrainH(P.x, P.z);
   P.vy = 0; P.air = false; P.crashT = 0; P.wobbleT = 0;
-  P.trickT = 0; P.tricksDone = 0; P.hopAir = false;
+  P.trickT = 0; P.airN = 0; P.hopAir = false;
   P.s = i * STEP;
 }
 function startRun() {
@@ -1678,17 +2250,24 @@ function startRun() {
   sectorStartTime = 0;
   curSectors = [0, 0, 0, 0];
   cdT = 1.9; cdShown = -1;
+  lastTrickName = ''; lastBoostPct = 0; smHitThisRun = false;
   state = S_COUNT;
   setBodyState(S_COUNT);
   countdownEl.style.display = 'block';
   sectorNum.textContent = '1';
   inp.steer = 0;
+  // the snowman is back on its feet every run
+  W.snowman.hit = false;
+  W.snowman.mesh.visible = true;
+  // gold-trim arch: decided at run start from the saved medal
+  W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
+  try { localStorage.setItem(MTN_KEY, W.cfg.id); } catch (e) {}
 }
 function gotoTitle() {
   state = S_TITLE;
   setBodyState(S_TITLE);
   countdownEl.style.display = 'none';
-  titleBest.textContent = best ? ('BEST ' + fmtTime(best.time)) : '';
+  titleBest.textContent = best ? (W.cfg.name + ' BEST ' + fmtTime(best.time)) : '';
 }
 function respawnAtCheckpoint(fade) {
   const i = lastGateIdx === 0 ? 3 : GATES[lastGateIdx - 1];
@@ -1703,7 +2282,7 @@ function respawnAtCheckpoint(fade) {
 function startCrash() {
   P.crashT = 1.2;
   P.air = false;
-  P.trickT = 0; P.tricksDone = 0; P.hopAir = false;
+  P.trickT = 0; P.airN = 0; P.hopAir = false;
   sfx.crash();
   if (window.ArcadeController) ArcadeController.rumble(0, { duration: 450, strong: 0.9, weak: 0.6 });
   spawnSpray(P.x, P.y + 0.5, P.z,
@@ -1717,12 +2296,12 @@ function finishRun() {
   finishShowT = 0.9;
   sfx.fanfare();
   flash('FINISH', '#ffd23e');
-  // medal + best bookkeeping
-  const medal = finalTime <= MEDALS.gold ? 'GOLD' : finalTime <= MEDALS.silver ? 'SILVER' : finalTime <= MEDALS.bronze ? 'BRONZE' : '';
+  const medal = medalFor(finalTime, MEDALS);
   const isBest = !best || finalTime < best.time;
   const prevBest = best;
   if (isBest) {
     best = { time: finalTime, sectors: curSectors.slice() };
+    W.best = best;
     try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {}
   }
   const ml = el('medalLine');
@@ -1761,22 +2340,23 @@ function passGate(n) { // n = 1..3
 
 /* obstacle collision — CSR query, zero allocation */
 function collideObstacles() {
-  const cx0 = clamp(Math.floor((P.x - OCELL - HX0) / OCELL), 0, OW - 1);
-  const cx1 = clamp(Math.floor((P.x + OCELL - HX0) / OCELL), 0, OW - 1);
-  const cz0 = clamp(Math.floor((P.z - OCELL - HZ0) / OCELL), 0, OH - 1);
-  const cz1 = clamp(Math.floor((P.z + OCELL - HZ0) / OCELL), 0, OH - 1);
+  const o2 = OBS;
+  const cx0 = clamp(Math.floor((P.x - o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
+  const cx1 = clamp(Math.floor((P.x + o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
+  const cz0 = clamp(Math.floor((P.z - o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
+  const cz1 = clamp(Math.floor((P.z + o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
   for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
-    const c = cz * OW + cx;
-    for (let k = obsStart[c]; k < obsStart[c + 1]; k++) {
-      const o = obsItems[k];
-      const dx = P.x - OX[o], dz = P.z - OZ[o];
-      const rr = OR[o] + 0.45;
+    const c = cz * o2.W + cx;
+    for (let k = o2.start[c]; k < o2.start[c + 1]; k++) {
+      const o = o2.items[k];
+      const dx = P.x - o2.X[o], dz = P.z - o2.Z[o];
+      const rr = o2.R[o] + 0.45;
       const d2 = dx * dx + dz * dz;
       if (d2 >= rr * rr) continue;
       const d = Math.sqrt(d2) || 0.01;
       // push out of the trunk either way
-      P.x = OX[o] + dx / d * rr;
-      P.z = OZ[o] + dz / d * rr;
+      P.x = o2.X[o] + dx / d * rr;
+      P.z = o2.Z[o] + dz / d * rr;
       if (P.v > 11) { startCrash(); return true; }
       // low-speed glance: wobble + scrub, keep skiing
       P.v *= 0.55;
@@ -1791,8 +2371,17 @@ function collideObstacles() {
 
 const wrapAngle = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 
+// landing-boost chain text: "FLIP!", "FLIP + 360 · x2 BOOST · VARIETY!"
+function chainText(n, variety) {
+  let t = TRICK_DISP[P.airTypes[0]];
+  for (let i = 1; i < n; i++) t += ' + ' + TRICK_DISP[P.airTypes[i]];
+  t += n === 1 ? '!' : ' · x' + n + ' BOOST';
+  if (variety) t += ' · VARIETY!';
+  return t;
+}
+
 function tickSim() {
-  if (state === S_TITLE || state === S_PAUSE) return;
+  if (state === S_TITLE || state === S_SELECT || state === S_PAUSE) return;
   TICK++;
   if (state === S_COUNT) {
     cdT -= DT;
@@ -1837,7 +2426,9 @@ function tickSim() {
   const finishing = state === S_FINISH;
   if (finishing) steer = 0;
 
-  /* jump & air tricks (west button / space / X / touch JUMP) */
+  /* jump & air tricks (west button / space / X / touch JUMP).
+     Mid-air, the stick at the moment of the press picks the trick:
+     neutral = BACKFLIP · left = 360 L · right = 360 R · fwd = FRONT FLIP */
   if (edges.jump && !finishing && state === S_RUN) {
     if (!P.air) {
       edges.jump = false;                 // consume: one press = one hop
@@ -1856,6 +2447,10 @@ function tickSim() {
     } else if (P.trickT <= 0) {
       edges.jump = false;                 // consume: one press = one trick
       P.trickT = TRICK_TIME;
+      P.trickType = inp.trickY < -0.45 ? TK_FRONT
+        : inp.trickX < -0.45 ? TK_SPIN_L
+        : inp.trickX > 0.45 ? TK_SPIN_R : TK_BACK;
+      lastTrickName = TRICK_NAMES[P.trickType];
       sfx.trick();
       if (window.ArcadeController) ArcadeController.rumble(0, { duration: 110, strong: 0.25, weak: 0.45 });
     }
@@ -1878,13 +2473,14 @@ function tickSim() {
     P.latSlope = g.x * dirz - g.z * dirx;
     // accelerate down the fall line component we're pointed along
     P.v += (-slopeAlong) * 9.81 * DT;
-    // drags: air (tuck helps), rolling, carving scrub, brake, deep snow
-    const cd = tuck ? CD_TUCK : CD_RUN;
-    if (tuck) P.v += TUCK_ACCEL * DT;     // pumping into the tuck: instant bite
+    // drags: air (tuck helps), rolling, carving scrub, brake, deep snow —
+    // all mountain-tuned (NIGHT RIDGE ice scrubs less, runs faster)
+    const cd = tuck ? MP.cdTuck : MP.cdRun;
+    if (tuck) P.v += MP.tuckAccel * DT;   // pumping into the tuck: instant bite
     P.v -= cd * P.v * P.v * DT;
     P.v -= 0.010 * 9.81 * DT;
-    P.v -= Math.abs(turnRate) * P.v * 0.034 * DT;
-    if (brake) P.v -= 4.4 * DT;
+    P.v -= Math.abs(turnRate) * P.v * MP.carve * DT;
+    if (brake) P.v -= MP.brake * DT;
     const du = Math.abs(P.u) - CW[P.curI];
     if (du > 1) {
       const deep = Math.min(1, (du - 1) / 4);
@@ -1920,7 +2516,12 @@ function tickSim() {
     P.y += P.vy * DT;
     if (P.trickT > 0) {                   // spin the trick out mid-air
       P.trickT -= DT;
-      if (P.trickT <= 0) { P.trickT = 0; P.tricksDone++; sfx.trickDone(); }
+      if (P.trickT <= 0) {
+        P.trickT = 0;
+        if (P.airN < 8) P.airTypes[P.airN] = P.trickType;
+        P.airN++;
+        sfx.trickDone();
+      }
     }
     if (P.y <= hNow) {
       P.y = hNow;
@@ -1929,23 +2530,33 @@ function tickSim() {
       const dphi = Math.abs(wrapAngle(P.heading - P.launchHeading));
       spawnSpray(P.x, P.y + 0.2, P.z, 0, 1.5, 0, 3.5, 26);
       const midTrick = P.trickT > 0;
-      const tricks = P.tricksDone;
-      P.trickT = 0; P.tricksDone = 0;
+      const nTr = Math.min(P.airN, 8);
+      P.trickT = 0; P.airN = 0;
       if (midTrick) {
         // kid mercy rule: an unfinished trick is a wobble, NEVER a crash
         P.v *= 0.94;
         P.wobbleT = Math.max(P.wobbleT, 0.9);
+        lastBoostPct = 0;
         sfx.landHard();
         if (window.ArcadeController) ArcadeController.rumble(0, { duration: 160, strong: 0.5, weak: 0.4 });
       } else {
         let cheered = false;
-        if (tricks > 0) {                 // completed trick(s): boost + popup
-          P.v = Math.min(P.v * (1 + TRICK_BOOST * tricks) + 0.5, VMAX_BOOST);
-          showTrickPop();
+        if (nTr > 0) {                    // completed trick(s): chained boost
+          let pct = CHAIN_FIRST + CHAIN_MORE * (nTr - 1);
+          let distinct = true;
+          for (let i = 1; i < nTr && distinct; i++) {
+            for (let j = 0; j < i; j++) if (P.airTypes[j] === P.airTypes[i]) { distinct = false; break; }
+          }
+          const variety = nTr > 1 && distinct;
+          if (variety) pct += CHAIN_VARIETY;
+          if (pct > CHAIN_CAP) pct = CHAIN_CAP;
+          lastBoostPct = pct;
+          P.v = Math.min(P.v * (1 + pct / 100) + 0.5, VMAX_BOOST);
+          showTrickPop(chainText(nTr, variety));
           sfx.trickLand();
           if (window.ArcadeController) ArcadeController.rumble(0, { duration: 180, strong: 0.55, weak: 0.6 });
           cheered = true;
-        }
+        } else lastBoostPct = 0;
         if (dphi < 0.16) {
           if (!P.hopAir) {                // aligned landing bonus (stacks)
             P.v = Math.min(P.v * 1.06 + 0.5, VMAX_BOOST);
@@ -1970,7 +2581,7 @@ function tickSim() {
   /* course progress (windowed nearest — cheap, monotonic) */
   {
     let j = P.curI;
-    const lim = Math.min(NS - 1, j + 14);
+    const lim = Math.min(NSM - 1, j + 14);
     let bd = (P.x - CX[j]) * (P.x - CX[j]) + (P.z - CZ[j]) * (P.z - CZ[j]);
     for (let k = j + 1; k <= lim; k++) {
       const dd = (P.x - CX[k]) * (P.x - CX[k]) + (P.z - CZ[k]) * (P.z - CZ[k]);
@@ -1998,6 +2609,23 @@ function tickSim() {
         if (prevI < GATES[gi] && j >= GATES[gi]) passGate(gi + 1);
       }
       if (prevI < FINISH_I && j >= FINISH_I) finishRun();
+    }
+  }
+
+  /* SNOWMAN — skiing through it is a poof + a nudge, never a crash */
+  {
+    const sm = W.snowman;
+    if (!sm.hit && state === S_RUN) {
+      const dx = P.x - sm.x, dz = P.z - sm.z;
+      if (dx * dx + dz * dz < sm.r * sm.r && P.y < sm.y + 3.0) {
+        sm.hit = true;
+        sm.mesh.visible = false;
+        smHitThisRun = true;
+        spawnSpray(sm.x, sm.y + 1.3, sm.z, dirx * P.v * 0.18, 2.8, dirz * P.v * 0.18, 4.4, 46);
+        sfx.whumpf();
+        if (window.ArcadeController) ArcadeController.rumble(0, { duration: 170, strong: 0.35, weak: 0.5 });
+        P.v = Math.min(P.v * 1.03 + 0.2, VMAX_BOOST);   // +3% racing-line reward
+      }
     }
   }
 
@@ -2076,6 +2704,8 @@ const TL = {
   tick: 0, state: 'title', speed: 0, pos: { x: 0, y: 0, z: 0 }, checkpoint: 0,
   mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
   air: false, trick: false, tricks: 0, wobble: false,
+  mountain: '', trickName: '', airTricks: 0, boostPct: 0,
+  snowman: false, goldArch: false, selectSel: 0,
   camRight: { x: 0, z: 0 },   // the REAL render camera's screen-right, in world
   perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
 };
@@ -2091,23 +2721,86 @@ function syncTelemetry() {
   TL.s = P.s; TL.u = P.u; TL.time = runTime;
   TL.air = P.air;
   TL.trick = P.trickT > 0;
-  TL.tricks = P.tricksDone;
+  TL.tricks = P.airN;
   TL.wobble = P.wobbleT > 0;
+  TL.mountain = W ? W.cfg.id : '';
+  TL.trickName = lastTrickName;
+  TL.airTricks = P.airN;
+  TL.boostPct = lastBoostPct;
+  TL.snowman = smHitThisRun;
+  TL.goldArch = W ? W.goldTrim.visible : false;
+  TL.selectSel = selectSel;
   const me = camera.matrixWorld.elements;  // column 0 = camera local X = screen-right
   TL.camRight.x = me[0]; TL.camRight.z = me[2];
 }
-// static course/obstacle dumps — data a player can see, for the harness bot
-(function dumpStatics() {
-  const c = [];
-  for (let i = 0; i < NS; i += 3) {
-    c.push({ i, s: i * STEP, x: CX[i], y: CY[i], z: CZ[i], curv: CCURV[i], w: CW[i], style: CSTYLE[i], ramp: CRAMP[i] });
+
+/* ═════════════════ mountain switching ═════════════════ */
+const MTN_ORDER = ['alp', 'nr'];
+function setMountain(id) {
+  const nw = WORLDS[id];
+  if (W && W !== nw) {
+    for (let i = 0; i < W.tiles.length; i++) W.tiles[i].mesh.visible = false;
+    W.sky.visible = false;
+    W.peaksMesh.visible = false;
+    W.snowman.mesh.visible = false;
+    W.goldTrim.visible = false;
+    if (W.glowMesh) W.glowMesh.visible = false;
   }
-  window.__ppCourse = c;
-  const o = [];
-  for (let i = 0; i < ONUM; i++) o.push({ x: OX[i], z: OZ[i], r: OR[i] });
-  window.__ppObstacles = o;
-  window.__ppGates = { gates: GATES.map(g => g * STEP), finish: FINISH_I * STEP, len: COURSE_LEN };
-})();
+  W = nw;
+  NSM = W.NSM;
+  CX = W.CX; CZ = W.CZ; CY = W.CY; CDX = W.CDX; CDZ = W.CDZ; CRX = W.CRX; CRZ = W.CRZ;
+  CCURV = W.CCURV; CW = W.CW; CBANK = W.CBANK; CRAMP = W.CRAMP; CWL = W.CWL; CWR = W.CWR; CSTYLE = W.CSTYLE;
+  GATES = W.GATES; RAMPS = W.RAMPS; FINISH_I = W.FINISH_I;
+  terrainInfo = W.terrainInfo; terrainH = W.terrainH; terrainGrad = W.terrainGrad;
+  OBS = W.obs; MEDALS = W.cfg.medals; BEST_KEY = W.cfg.bestKey; MP = W.cfg.phys;
+  best = W.best;
+  W.sky.visible = true;
+  W.peaksMesh.visible = true;
+  W.snowman.mesh.visible = !W.snowman.hit;
+  if (W.glowMesh) W.glowMesh.visible = true;
+  W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
+  // atmosphere + the skier's lights follow the mountain
+  const c = W.cfg;
+  scene.fog.color.setRGB(c.fog[0], c.fog[1], c.fog[2]);
+  scene.fog.near = c.fogNear; scene.fog.far = c.fogFar;
+  scene.background.setRGB(c.fog[0], c.fog[1], c.fog[2]);
+  sunLight.color.set(c.lightSun); sunLight.intensity = c.lightInt;
+  hemiLight.color.set(c.lightSky); hemiLight.groundColor.set(c.lightGnd);
+  // HUD statics are per mountain
+  drawProfile();
+  bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
+  // read-only static dumps for the harness track the ACTIVE mountain
+  window.__ppCourse = W.dump.course;
+  window.__ppObstacles = W.dump.obstacles;
+  window.__ppGates = W.dump.gates;
+  window.__ppShortcut = W.dump.shortcut;
+  window.__ppSnowman = W.dump.snowman;
+  window.__ppPeaks = W.dump.peaks;
+  // stale spray from the other mountain never lingers
+  for (let i = 0; i < SPRAY_N; i++) { sprayLife[i] = 0; sprayPos[i * 3 + 1] = -999; }
+  placeAtSample(2);
+}
+
+/* ═════════════════ mountain select screen ═════════════════ */
+function updateSelectCards() {
+  for (let i = 0; i < 2; i++) {
+    el('mcard' + i).className = 'mcard' + (selectSel === i ? ' sel' : '');
+    const Wd = WORLDS[MTN_ORDER[i]];
+    const b = Wd.best;
+    el('mbest' + i).textContent = b ? ('BEST ' + fmtTime(b.time)) : 'NOT YET SKIED';
+    const md = b ? medalFor(b.time, Wd.cfg.medals) : '';
+    const mel = el('mmedal' + i);
+    mel.textContent = md ? (md + ' MEDAL') : ' ';
+    mel.className = 'mmedal ' + md.toLowerCase();
+  }
+}
+function gotoSelect() {
+  state = S_SELECT;
+  setBodyState(S_SELECT);
+  const cur = MTN_ORDER.indexOf(W.cfg.id);
+  selectSel = cur >= 0 ? cur : 0;
+  updateSelectCards();
+}
 
 /* ═════════════════ camera ═════════════════ */
 const camPos = new THREE.Vector3(0, 30, -40);
@@ -2121,7 +2814,7 @@ function snapCameraBehind() {
   camLook.set(P.x + dx * 7.5, P.y + 1.1, P.z + dz * 7.5);
 }
 function updateCamera(dt, now) {
-  if (state === S_TITLE) {
+  if (state === S_TITLE || state === S_SELECT) {
     const t = now * 0.00006;
     const ci = 60;
     const cx = CX[ci], cz = CZ[ci], cy2 = CY[ci];
@@ -2165,7 +2858,7 @@ function updateCamera(dt, now) {
   }
   camera.position.copy(camPos);
   camera.lookAt(camLook);
-  skyGroup.position.copy(camPos);
+  W.sky.position.copy(camPos);
 }
 
 /* ═════════════════ skier pose + per-frame visuals ═════════════════ */
@@ -2195,11 +2888,18 @@ function updateSkier(dt) {
   smPitch += (targetPitch - smPitch) * Math.min(1, dt * 6);
   const targetRoll = -inp.steer * 0.40 * Math.min(1, P.v / 16) + clamp(P.latSlope, -0.8, 0.8) * 0.35;
   smRoll += (targetRoll - smRoll) * Math.min(1, dt * 7);
-  skier.rotation.y = P.heading;
-  // air trick: a full backflip over TRICK_TIME (ends exactly re-aligned)
-  skier.rotation.x = P.trickT > 0
-    ? smPitch - (1 - P.trickT / TRICK_TIME) * Math.PI * 2
-    : smPitch;
+  // air tricks: each type spins a different clean whole-group axis over
+  // TRICK_TIME (all end exactly re-aligned)
+  let ry = P.heading, rx = smPitch;
+  if (P.trickT > 0) {
+    const prog = 1 - P.trickT / TRICK_TIME;
+    if (P.trickType === TK_BACK) rx = smPitch - prog * Math.PI * 2;
+    else if (P.trickType === TK_FRONT) rx = smPitch + prog * Math.PI * 2;
+    else if (P.trickType === TK_SPIN_L) ry = P.heading + prog * Math.PI * 2;
+    else ry = P.heading - prog * Math.PI * 2;
+  }
+  skier.rotation.y = ry;
+  skier.rotation.x = rx;
   skier.rotation.z = smRoll;
 
   const hipY = 0.95 - 0.34 * poseCrouch;
@@ -2230,10 +2930,44 @@ function updateVisuals(dt, now) {
   updateSkier(dt);
   // tile culling by camera distance (fog hides the pop)
   const cxp = camera.position.x, czp = camera.position.z;
+  const tiles = W.tiles;
   for (let i = 0; i < tiles.length; i++) {
     const t = tiles[i];
     const ddx = t.cx - cxp, ddz = t.cz - czp;
     t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400; // 520^2
+  }
+  // NIGHT RIDGE sky life: aurora sway + one pooled shooting star. Whole-mesh
+  // transform/opacity only — geometry never touched per frame.
+  if (W.extras) {
+    const E = W.extras;
+    E.aurora.rotation.y = Math.sin(now * 0.00005) * 0.06;
+    E.aurora.material.opacity = 0.66 + 0.22 * Math.sin(now * 0.00013 + 1.3);
+    if (E.starActive > 0) {
+      E.starActive -= dt;
+      const t = clamp(1 - E.starActive / 0.8, 0, 1);
+      E.star.position.set(E.sx + E.svx * t, E.sy + E.svy * t, E.sz);
+      E.star.material.opacity = Math.sin(Math.PI * t) * 0.9;
+      if (E.starActive <= 0) {
+        E.star.visible = false;
+        E.star.material.opacity = 0;
+        E.starT = 25 + Math.random() * 15;      // next one in ~25-40 s
+      }
+    } else if (state !== S_PAUSE) {
+      E.starT -= dt;
+      if (E.starT <= 0) {
+        E.starActive = 0.8;
+        E.sx = -450 + Math.random() * 900;
+        E.sy = 390 + Math.random() * 150;
+        E.sz = 680 + Math.random() * 260;
+        E.svx = (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 150);
+        E.svy = -(110 + Math.random() * 90);
+        E.star.rotation.order = 'YXZ';
+        E.star.rotation.y = Math.atan2(E.svx, 0);
+        E.star.rotation.x = -Math.atan2(E.svy, Math.abs(E.svx));
+        E.star.position.set(E.sx, E.sy, E.sz);
+        E.star.visible = true;
+      }
+    }
   }
   sprayAttr.needsUpdate = true;
   if (snowfall) {
@@ -2242,7 +2976,7 @@ function updateVisuals(dt, now) {
   }
   // audio follows the sim
   if (ac) {
-    const duck = (state === S_PAUSE || state === S_TITLE) ? 0.25 : 1;
+    const duck = (state === S_PAUSE || state === S_TITLE || state === S_SELECT) ? 0.25 : 1;
     windGain.gain.value = Math.min(0.20, P.v * 0.006) * duck;
     windFilt.frequency.value = 260 + P.v * 26;
     carveGain.gain.value = (!P.air && state === S_RUN)
@@ -2286,7 +3020,22 @@ function updatePauseSel() {
 }
 function menuLogic(dt) {
   if (state === S_TITLE) {
-    if (edges.confirm || edges.any) { sfx.jingle(); startRun(); snapCameraBehind(); }
+    // START quick-starts the last-played mountain; anything else opens
+    // the mountain select
+    if (edges.pause) { sfx.jingle(); startRun(); snapCameraBehind(); }
+    else if (edges.confirm || edges.any) { sfx.menuMove(); gotoSelect(); }
+  } else if (state === S_SELECT) {
+    if (edges.selCard >= 0) {           // touch: tap selects, tap again confirms
+      if (edges.selCard === selectSel) edges.confirm = true;
+      else { selectSel = edges.selCard; updateSelectCards(); sfx.menuMove(); }
+    }
+    if (edges.left && selectSel !== 0) { selectSel = 0; updateSelectCards(); sfx.menuMove(); }
+    else if (edges.right && selectSel !== 1) { selectSel = 1; updateSelectCards(); sfx.menuMove(); }
+    if (edges.confirm) {
+      setMountain(MTN_ORDER[selectSel]);
+      sfx.jingle();
+      startRun(); snapCameraBehind();
+    } else if (edges.back || edges.pause) { sfx.menuMove(); gotoTitle(); }
   } else if (state === S_PAUSE) {
     if (edges.up || edges.down) { pauseSel = 1 - pauseSel; updatePauseSel(); sfx.menuMove(); }
     if (edges.pause) { state = pausedFrom; setBodyState(state); }
@@ -2340,7 +3089,7 @@ function frame(now) {
   gatherInput();
   menuLogic(dtReal);
   let n = 0;
-  if (state !== S_TITLE && state !== S_PAUSE) {
+  if (state !== S_TITLE && state !== S_SELECT && state !== S_PAUSE) {
     if (TURBO > 0) {
       // test mode only: the harness may retune tick rate mid-session
       n = (typeof window.__ppTurbo === 'number') ? clamp(window.__ppTurbo, 1, 30) : TURBO;
@@ -2361,9 +3110,29 @@ function frame(now) {
   updateHUD();
 }
 
-/* boot */
-placeAtSample(2);
-bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
+/* ═════════════════ boot ═════════════════ */
+// vista thumbnails for the select cards — rendered once from the REAL scene
+function renderVistas() {
+  for (let i = 0; i < 2; i++) {
+    setMountain(MTN_ORDER[i]);
+    const ci = 60;
+    camera.position.set(CX[ci] + 52, CY[ci] + 22, CZ[ci]);
+    camera.lookAt(CX[ci + 40], CY[ci + 40] + 4, CZ[ci + 40]);
+    camera.updateMatrixWorld();
+    W.sky.position.copy(camera.position);
+    const cxp = camera.position.x, czp = camera.position.z;
+    for (let k = 0; k < W.tiles.length; k++) {
+      const t = W.tiles[k];
+      const ddx = t.cx - cxp, ddz = t.cz - czp;
+      t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400;
+    }
+    renderer.render(scene, camera);
+    const tc = el('mthumb' + i);
+    tc.getContext('2d').drawImage(canvas, 0, 0, VW, VH, 0, 0, tc.width, tc.height);
+  }
+}
+renderVistas();
+setMountain(lastMtnId);
 gotoTitle();
 syncTelemetry();
 requestAnimationFrame(frame);

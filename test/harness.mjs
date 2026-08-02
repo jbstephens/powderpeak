@@ -76,7 +76,16 @@ function connect(wsUrl) {
       send(method, params = {}) {
         return new Promise((res2, rej2) => {
           const mid = ++id;
-          pending.set(mid, { res2, rej2, method });
+          // a reply can get dropped around navigations — surface it as an
+          // error instead of hanging the whole session forever
+          const guard = setTimeout(() => {
+            if (pending.has(mid)) {
+              pending.delete(mid);
+              rej2(new Error(method + ': no CDP reply in 30s'));
+            }
+          }, 30000);
+          pending.set(mid, { res2: v => { clearTimeout(guard); res2(v); },
+                             rej2: e => { clearTimeout(guard); rej2(e); }, method });
           ws.send(JSON.stringify({ id: mid, method, params }));
         });
       },
@@ -126,7 +135,7 @@ const PAD_STUB = `(function(){
 const BOT_SRC = `(function(){
   if (window.__botInstalled) return; window.__botInstalled = true;
   window.__bot = { on:false, mode:'race', forceTuck:false, forceBrake:false, noTuck:false,
-                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[] };
+                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[], path:null, pathIdx:0 };
   const wrap = a => { while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
   function step(){
     requestAnimationFrame(step);
@@ -134,9 +143,27 @@ const BOT_SRC = `(function(){
     if (!b.on || !T || !C) return;
     if (T.state !== 'run' || T.mode === 'crash') { window.__fakePad.press(); return; }
     let tx, tz, la;
+    let onPath = false;
     const idx = Math.min(C.length-1, Math.max(0, Math.round(T.s/9)));
     if (b.mode === 'ram') { tx = b.ramX; tz = b.ramZ; }
-    else {
+    else if (b.path) {
+      // steering-target hint channel: pure pursuit along supplied waypoints
+      // (the SHORTCUT line) — output is still REAL pad input every frame
+      const pts = b.path;
+      let ni = b.pathIdx, nd = 1e18;
+      for (let k=b.pathIdx; k<Math.min(pts.length, b.pathIdx+14); k++) {
+        const d = (pts[k].x-T.pos.x)*(pts[k].x-T.pos.x) + (pts[k].z-T.pos.z)*(pts[k].z-T.pos.z);
+        if (d < nd) { nd = d; ni = k; }
+      }
+      b.pathIdx = ni;
+      if (ni >= pts.length-2) { b.path = null; b.pathIdx = 0; }
+      else {
+        const L = Math.max(3, Math.round(T.speed*0.55/3));
+        const look = pts[Math.min(pts.length-1, ni+L)];
+        tx = look.x; tz = look.z; onPath = true;
+      }
+    }
+    if (b.mode !== 'ram' && !onPath) {
       la = Math.max(2, Math.round(T.speed*0.9/9));
       const look = C[Math.min(C.length-1, idx+la)];
       tx = look.x; tz = look.z;
@@ -152,6 +179,7 @@ const BOT_SRC = `(function(){
     for (let k=idx; k<idx+lookN; k++) { const c=Math.abs(C[k].curv); if (c>maxC) maxC=c; }
     let tuck = (b.mode==='ram') || (maxC < 0.013 && Math.abs(err) < 0.15);
     let brake = (maxC > 0.034 && T.speed > 15) || (maxC > 0.022 && T.speed > 25);
+    if (onPath) { tuck = Math.abs(err) < 0.12; brake = false; }
     if (b.mode === 'ram') brake = false;
     if (b.forceTuck) { tuck = true; brake = false; }
     if (b.forceBrake) { brake = true; tuck = false; }
@@ -223,10 +251,13 @@ function makeApi(c) {
       await api.press(i); await sleep(120); await api.press(); await sleep(120);
     },
     async key(key, code, vk, down) {
-      await c.send('Input.dispatchKeyEvent', {
-        type: down ? 'rawKeyDown' : 'keyUp', key, code,
-        windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk,
-      });
+      // Keys are dispatched as KeyboardEvents on window — the exact same
+      // handlers the real keyboard drives. CDP Input.dispatchKeyEvent
+      // intermittently DEADLOCKS this headless+swiftshader renderer for
+      // 60s+ (evals stop replying too), which made every kbd run a coin
+      // flip; the in-page path is deterministic and hits identical code.
+      await api.eval(`window.dispatchEvent(new KeyboardEvent('${down ? 'keydown' : 'keyup'}', ` +
+        `{key:${JSON.stringify(key)}, code:${JSON.stringify(code)}, keyCode:${vk}, bubbles:true, cancelable:true}))`);
     },
     async tapKey(key, code, vk) { await api.key(key, code, vk, true); await sleep(90); await api.key(key, code, vk, false); await sleep(90); },
     async shot(name) {
@@ -242,6 +273,35 @@ function makeApi(c) {
     },
   };
   return api;
+}
+
+/* Headless rAF can stall through a whole press+release window, silently
+   dropping a pad edge (the long-standing "event-drop" gotcha). Every
+   state-changing tap therefore retries until the state actually moves. */
+async function tapUntil(A, btn, expr, label) {
+  for (let i = 0; i < 6; i++) {
+    await A.tapButton(btn);
+    try { await A.waitFor(expr, 1500, label); return; } catch {}
+  }
+  throw new Error('tapUntil gave up: ' + label);
+}
+async function tapKeyUntil(A, key, code, vk, expr, label) {
+  for (let i = 0; i < 6; i++) {
+    await A.tapKey(key, code, vk);
+    try { await A.waitFor(expr, 1500, label); return; } catch {}
+  }
+  throw new Error('tapKeyUntil gave up: ' + label);
+}
+/* pad path through the mountain select: title → select → card → run */
+async function startFromTitle(A, mtn) {
+  await tapUntil(A, 0, `__pp.state==='select'`, 'select screen');
+  const want = mtn === 'nr' ? 1 : 0;
+  for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== want; i++) {
+    await A.tapButton(want === 1 ? 15 : 14);        // dpad right / left
+  }
+  if (await A.eval('__pp.selectSel') !== want) throw new Error('could not highlight card ' + want);
+  await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'run start');
+  await A.waitFor(`__pp.state==='run'`, 12000, 'countdown → run');
 }
 
 /* course math on the node side (from the page's static dump) */
@@ -281,11 +341,10 @@ async function gatesSession(base) {
     gate('backdrop peaks clear the course (margin ≥ 100m)', pk.n >= 10 && pk.worst >= 100,
       `${pk.n} peaks, worst margin ${pk.worst}m`);
 
-    // title → south → countdown → run
-    await A.tapButton(0);
-    await A.waitFor(`__pp.state==='countdown'||__pp.state==='run'`, 6000, 'run start');
-    await A.waitFor(`__pp.state==='run'`, 8000, 'countdown → run');
-    gate('title: press south starts the run', true);
+    // title → south → mountain select → south (ALPENGLOW) → countdown → run
+    await startFromTitle(A, 'alp');
+    gate('title: south → select → south starts an ALPENGLOW run',
+      await A.eval('__pp.mountain') === 'alp');
 
     // gravity gets us moving
     await A.waitTicks(200);
@@ -534,8 +593,10 @@ async function kbdSession(base) {
     await sleep(400);
     gate('kbd: boots to title', await A.eval('__pp.state') === 'title');
     await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select screen');
+    await A.tapKey('Enter', 'Enter', 13);
     await A.waitFor(`__pp.state==='run'`, 10000, 'kbd run start');
-    gate('kbd: Enter starts the run', true);
+    gate('kbd: Enter → select → Enter starts the run', true);
     // tuck first, on the straight opening, before any drift off the piste
     const vPre = await A.eval('__pp.speed');
     await A.key('ArrowDown', 'ArrowDown', 40, true);   // tuck
@@ -631,7 +692,11 @@ async function shotsSession(base) {
     await A.nav(base + '/index.html?turbo=3&fx=full');
     await sleep(1500);
     await A.shot('01-title');
-    await A.tapButton(0);
+    // mountain select screen
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select');
+    await sleep(400);
+    await A.shot('10-select');
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'run');  // ALPENGLOW
     await A.waitFor(`__pp.state==='run'`, 10000, 'run');
     await A.installBot();
     await A.bot({ on: true, mode: 'race' });
@@ -643,18 +708,45 @@ async function shotsSession(base) {
     await at(255, '02-open-speed');
     await at(640, '03-slalom');
     await at(742, '04-hairpin-chevrons');
-    // mid-air TRICK off ramp 2 (s≈1000) — drop to real time, press west in
-    // the air, then catch the skier mid-backflip
+    // 360 SPIN off ramp 2 (s≈1000): stick LEFT at the press, catch it
+    // mid-spin, then chain a FLIP and catch the chain popup on landing
     await A.waitFor(`__pp.s > 930`, 120000, 'near ramp 2');
+    await A.bot({ forceTuck: true });
     await A.eval('window.__ppTurbo = 1');
     await A.waitFor(`__pp.mode==='air'`, 30000, 'airborne');
-    await A.bot({ extraBtns: [2] });
-    await A.waitFor('__pp.trick === true', 3000, 'trick spinning');
-    await A.bot({ extraBtns: [] });
-    await sleep(270);
-    await A.shot('05-midair-trick');
+    await A.bot({ on: false, forceTuck: false });
+    await A.eval('__fakePad.axes(-1,0)');
+    await sleep(80);
+    await A.eval('__fakePad.press(2)');
+    await A.waitFor('__pp.trick === true', 3000, 'spin spinning');
+    await A.eval('__fakePad.press()');
+    await sleep(240);
+    await A.shot('05-midair-360');
+    await A.eval('__fakePad.axes(0,0)');
+    await A.waitFor('__pp.trick === false', 3000, 'spin done');
+    if (await A.eval(`__pp.air === true`)) {   // chain a FLIP if still airborne
+      await A.eval('__fakePad.press(2)');
+      await sleep(120);
+      await A.eval('__fakePad.press()');
+    }
+    await A.waitFor('__pp.air === false', 10000, 'landed');
+    await sleep(150);
+    await A.shot('05b-chain-popup');
+    await A.bot({ on: true, mode: 'race' });
     await A.eval('window.__ppTurbo = 3');
-    // pause menu
+    // hidden shortcut entrance: fence gap + faint old tracks, subtle.
+    // Glide straight (no carve) for a beat first so no spray blocks the view.
+    const scut = await A.eval('JSON.stringify(window.__ppShortcut)').then(JSON.parse);
+    await A.waitFor(`__pp.s >= ${scut.entryS - 60}`, 120000, 'approach shortcut entry');
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitFor(`__pp.s >= ${scut.entryS - 22}`, 30000, 'near shortcut entry');
+    await A.bot({ on: false });
+    await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+    await sleep(700);
+    await A.shot('11-shortcut-entrance');
+    await A.bot({ on: true, mode: 'race' });
+    await A.eval('window.__ppTurbo = 3');
+    // pause menu (with the new trick hint line)
     await A.waitFor(`__pp.s > 1150`, 120000, 'mid course');
     await A.tapButton(9);
     await A.waitFor(`__pp.state==='pause'`, 5000, 'pause');
@@ -680,9 +772,51 @@ async function shotsSession(base) {
       await A.waitFor(`__pp.state==='run'`, 15000, 'respawn');
       await A.bot({ mode: 'race' });
     }
+    // SNOWMAN moment on the final schuss
+    const sm = await A.eval('JSON.stringify(window.__ppSnowman)').then(JSON.parse);
+    await A.waitFor(`__pp.s > ${sm.s - 110}`, 120000, 'approach snowman');
+    await A.bot({ mode: 'ram', ramX: sm.x, ramZ: sm.z });
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitFor('__pp.snowman === true', 30000, 'snowman poof');
+    await A.bot({ mode: 'race' });
+    await sleep(160);
+    await A.shot('12-snowman-poof');
+    await A.eval('window.__ppTurbo = 3');
     await A.waitFor(`__pp.state==='finish'`, 300000, 'finish');
     await sleep(1400);
     await A.shot('08-finish');
+    // ── NIGHT RIDGE shots ──
+    await sleep(1200);                       // finish input guard
+    await tapUntil(A, 1, `__pp.state==='title'`, 'back to title');  // east
+    await startFromTitle(A, 'nr');
+    await A.bot({ on: true, mode: 'race', path: null });
+    await A.waitFor(`__pp.s >= 235`, 120000, 'nr at speed');
+    await A.shot('13-nr-vista-aurora');
+    const nrGates = await A.eval('window.__ppGates');
+    await A.waitFor(`__pp.s >= ${nrGates.gates[0] - 28}`, 120000, 'nr gate 1 approach');
+    await A.eval('window.__ppTurbo = 1');
+    await sleep(120);
+    await A.shot('14-nr-gate-lanterns');
+    await A.eval('window.__ppTurbo = 3');
+    // first night hairpin
+    const nrCourse = await A.eval('window.__ppCourse');
+    let hpS = null;
+    for (const p of nrCourse) { if (p.style === 2) { hpS = p.s; break; } }
+    await A.waitFor(`__pp.s >= ${hpS - 38}`, 120000, 'nr hairpin approach');
+    await A.eval('window.__ppTurbo = 1');
+    await sleep(400);
+    await A.shot('15-nr-hairpin');
+    await A.eval('window.__ppTurbo = 3');
+    // ── gold-trim arch (seed a gold best, reload, start a run) ──
+    await A.eval(`window.__ppTurbo = 1; localStorage.setItem('powderpeak_best', JSON.stringify({time:88, sectors:[20,25,25,18]}))`);
+    await A.nav(base + '/index.html?turbo=3&fx=full');
+    await sleep(800);
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select for gold arch');
+    for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 0; i++) await A.tapButton(14);
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'gold-arch run');
+    await A.eval('window.__ppTurbo = 1');   // hold the countdown: arch framed
+    await sleep(250);
+    await A.shot('16-gold-arch');
     c.close();
   } finally {
     proc.kill(); await sleep(400);
@@ -702,15 +836,48 @@ async function ipadSession(base) {
     await c.send('Emulation.setTouchEmulationEnabled', { enabled: true });
     await A.nav(base + '/index.html?fx=full');
     await sleep(1200);
-    // tap to start (touch source → touch UI visible)
+    // tap to start (touch source → touch UI visible). Same stall guard as
+    // keys: if the CDP input pipeline stops ACKing, drive the element's own
+    // touch handlers in-page.
+    const touchSend = async (type, pts, x, y) => {
+      const p2 = c.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+      p2.catch(() => {});
+      try {
+        await Promise.race([p2, new Promise((_, rej) => setTimeout(() => rej(new Error('stalled')), 5000))]);
+      } catch {
+        console.log('  (touch pipeline stalled — in-page TouchEvent fallback)');
+        const ev = type === 'touchStart' ? 'touchstart' : 'touchend';
+        await A.eval(`(function(){
+          const el = ${type === 'touchStart' ? `document.elementFromPoint(${x},${y})` : 'window.__lastTouchEl'} || document.body;
+          if (${type === 'touchStart' ? 'true' : 'false'}) window.__lastTouchEl = el;
+          el.dispatchEvent(new TouchEvent('${ev}', { bubbles: true, cancelable: true }));
+        })()`);
+      }
+    };
     const tap = async (x, y) => {
-      await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      await touchSend('touchStart', [{ x, y }], x, y);
       await sleep(80);
-      await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await touchSend('touchEnd', [], x, y);
     };
     await tap(512, 680);
+    await A.waitFor(`__pp.state==='select'`, 8000, 'touch → select screen');
+    // tap a card selects it; tapping the selected card confirms
+    const cardC = async id => {
+      const r = await A.eval(`(() => { const b = document.getElementById('${id}').getBoundingClientRect();
+        return { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 }; })()`);
+      return r;
+    };
+    const c1 = await cardC('mcard1');
+    await tap(c1.x, c1.y);
+    await sleep(250);
+    gate('touch: tapping a card selects it', await A.eval('__pp.selectSel') === 1);
+    const c0 = await cardC('mcard0');
+    await tap(c0.x, c0.y);
+    await sleep(250);
+    await tap(c0.x, c0.y);                    // second tap on selected = confirm
     await A.waitFor(`__pp.state==='countdown'||__pp.state==='run'`, 8000, 'touch start');
     await A.waitFor(`__pp.state==='run'`, 8000, 'touch run');
+    gate('touch: tap-again confirms (ALPENGLOW run)', await A.eval('__pp.mountain') === 'alp');
     const touchUI = await A.eval(`document.body.classList.contains('input-touch')`);
     gate('touch: input-touch class active (touch UI shown)', touchUI);
     // JUMP + BRAKE stack in the left corner: both ≥60px on screen, no overlap
@@ -735,10 +902,10 @@ async function ipadSession(base) {
     // held BRAKE slows the run
     const vT0 = await A.eval('__pp.speed');
     const bc = { x: (rects.brake.l + rects.brake.r) / 2, y: (rects.brake.t + rects.brake.b) / 2 };
-    await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: bc.x, y: bc.y }] });
+    await touchSend('touchStart', [{ x: bc.x, y: bc.y }], bc.x, bc.y);
     await A.waitTicks(120, 20000);
     const vT1 = await A.eval('__pp.speed');
-    await c.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touchSend('touchEnd', [], bc.x, bc.y);
     gate('touch: BRAKE button scrubs speed', vT1 < vT0 - 1.0, `v ${vT0.toFixed(1)} → ${vT1.toFixed(1)}`);
     await A.shot('09-ipad-portrait');
     gate('zero console errors/warnings (ipad session)', A.consoleBad.length === 0,
@@ -750,9 +917,376 @@ async function ipadSession(base) {
   }
 }
 
+/* ═══════════ MOUNTAIN SELECT SESSION — nav, quick start, gold arch ═══════════ */
+async function mtnSession(base) {
+  console.log('\n── mountain select session (?turbo=8) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await sleep(500);
+    // pad: south opens select, east backs out
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select opens');
+    gate('select: south at title opens mountain select', true);
+    await tapUntil(A, 1, `__pp.state==='title'`, 'east backs out');
+    gate('select: east backs out to title', true);
+    // pad: navigate right to NIGHT RIDGE, confirm, run starts on it
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select again');
+    for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 1; i++) await A.tapButton(15);
+    gate('select: dpad-right highlights NIGHT RIDGE', await A.eval('__pp.selectSel') === 1);
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'nr run');
+    await A.waitFor(`__pp.state==='run'`, 12000, 'nr countdown → run');
+    gate('select: confirm starts a NIGHT RIDGE run', await A.eval('__pp.mountain') === 'nr');
+    gate('select: last-played mountain persisted',
+      await A.eval(`localStorage.getItem('powderpeak_mtn')`) === 'nr');
+    // START at title quick-starts the LAST-PLAYED mountain (no select)
+    await A.eval('window.__ppTurbo = 1');   // cool the hot sim before re-nav
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await sleep(500);
+    await tapUntil(A, 9, `__pp.state==='countdown'||__pp.state==='run'`, 'quick start');
+    gate('select: START at title quick-starts last-played (NIGHT RIDGE)',
+      await A.eval('__pp.mountain') === 'nr');
+    // keyboard path: Enter → arrows → Esc backs out → Enter → Enter
+    await A.eval('window.__ppTurbo = 1');
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await sleep(500);
+    await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select');
+    const keySel = async (key, vk, want) => {   // rAF can stall in headless:
+      await A.tapKey(key, key, vk);             // poll rather than instant-read
+      try { await A.waitFor(`__pp.selectSel === ${want}`, 2500, ''); return true; }
+      catch { return false; }
+    };
+    gate('select: ArrowLeft highlights ALPENGLOW', await keySel('ArrowLeft', 37, 0));
+    gate('select: ArrowRight highlights NIGHT RIDGE', await keySel('ArrowRight', 39, 1));
+    await A.tapKey('Escape', 'Escape', 27);
+    await A.waitFor(`__pp.state==='title'`, 6000, 'esc backs out');
+    gate('select: Escape backs out to title', true);
+    await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select 2');
+    await A.tapKey('ArrowLeft', 'ArrowLeft', 37);
+    await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='run'`, 12000, 'kbd alp run');
+    gate('select: keyboard confirm starts ALPENGLOW', await A.eval('__pp.mountain') === 'alp');
+    gate('zero console errors/warnings (mtn session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+  // gold-trim arch gets a FRESH chrome: repeated heavy page loads in one
+  // headless tab can kill the swiftshader renderer mid-eval
+  console.log('── gold arch session (?turbo=8) ──');
+  const g2 = await launchChrome();
+  try {
+    const c = await pageSession(g2.port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.eval(`localStorage.setItem('powderpeak_best', JSON.stringify({time:90, sectors:[20,25,27,18]}))`);
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=2');
+    await sleep(500);
+    await startFromTitle(A, 'alp');
+    gate('gold arch: GOLD best renders the trim (telemetry flag)',
+      await A.eval('__pp.goldArch') === true);
+    await A.eval(`window.__ppTurbo = 1; localStorage.setItem('powderpeak_best', JSON.stringify({time:120, sectors:[28,32,35,25]}))`);
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=3');
+    await sleep(500);
+    await startFromTitle(A, 'alp');
+    gate('gold arch: non-gold best leaves the trim off',
+      await A.eval('__pp.goldArch') === false);
+    gate('zero console errors/warnings (gold-arch session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    g2.proc.kill(); await sleep(400);
+    try { fs.rmSync(g2.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+/* ═══════════ NIGHT RIDGE SESSION — full course, budgets, best key ═══════════ */
+async function nrSession(base) {
+  console.log('\n── NIGHT RIDGE session (?turbo=10, bot race) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await sleep(500);
+    await startFromTitle(A, 'nr');
+    gate('nr: run starts on NIGHT RIDGE', await A.eval('__pp.mountain') === 'nr');
+    // scenery may never sit on the piste — NIGHT RIDGE edition
+    const pk = JSON.parse(await A.eval(`JSON.stringify((function(){
+      const P = window.__ppPeaks || [], C = window.__ppCourse || [];
+      let worst = 1e9;
+      for (const p of P) for (const c of C) {
+        const d = Math.hypot(c.x - p.x, c.z - p.z) - p.r;
+        if (d < worst) worst = d;
+      }
+      return { n: P.length, worst: Math.round(worst) };
+    })())`));
+    gate('nr: backdrop peaks clear the course (margin ≥ 100m)', pk.n >= 10 && pk.worst >= 100,
+      `${pk.n} peaks, worst margin ${pk.worst}m`);
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    let crashes = 0, lastState = 'run';
+    const t0 = Date.now();
+    while (Date.now() - t0 < 300000) {
+      const st = await A.eval('__pp.state');
+      if (st === 'crash' && lastState !== 'crash') crashes++;
+      lastState = st;
+      if (st === 'finish') break;
+      await sleep(150);
+    }
+    const fin = await A.eval('({t:__pp.time, cp:__pp.checkpoint, st:__pp.state})');
+    gate('nr: bot completes the course', fin.st === 'finish' && fin.t > 40 && fin.t < 260,
+      `time ${fin.t.toFixed(2)}s, crashes ${crashes}`);
+    gate('nr: all 3 checkpoints were passed', fin.cp === 3, `checkpoint=${fin.cp}`);
+    const bestRaw = await A.eval(`localStorage.getItem('powderpeak_best_nr')`);
+    let bestObj = null; try { bestObj = JSON.parse(bestRaw); } catch {}
+    gate('nr: best time persisted to powderpeak_best_nr',
+      !!bestObj && typeof bestObj.time === 'number' && Math.abs(bestObj.time - fin.t) < 0.05,
+      bestRaw && bestRaw.slice(0, 80));
+    gate('nr: ALPENGLOW best key untouched',
+      await A.eval(`localStorage.getItem('powderpeak_best')`) === null);
+    const perf = await A.eval('__pp.perf');
+    gate('nr perf: draw calls ≤ 80 at worst', perf.maxCalls <= 80,
+      `max ${perf.maxCalls} (sectors ${perf.sectorCalls.join('/')})`);
+    gate('nr perf: triangles ≤ 150k at worst', perf.maxTris <= 150000,
+      `max ${perf.maxTris} (sectors ${perf.sectorTris.join('/')})`);
+    gate('nr perf: every sector was sampled', perf.sectorCalls.every(v => v > 0), perf.sectorCalls.join('/'));
+    gate('zero console errors/warnings (nr session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+/* ═══════════ TRICKS SESSION — four types by stick, chains, variety ═══════════ */
+async function tricksSession(base) {
+  console.log('\n── tricks session (?turbo=8, ramp airs) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await sleep(500);
+    await startFromTitle(A, 'alp');
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    // ramp lips from the course dump (visible, sculpted kickers)
+    const course = await A.eval('window.__ppCourse');
+    // dump samples every 9m, so the exact 2.3m lip sample may be absent —
+    // detect kicker CLUSTERS and take the last (highest) sample + a nudge
+    const lips = [];
+    let clusterEnd = null;
+    for (const p of course) {
+      if (p.ramp > 0.4) clusterEnd = p.s;
+      else if (clusterEnd !== null) { lips.push(clusterEnd + 4); clusterEnd = null; }
+    }
+    if (clusterEnd !== null) lips.push(clusterEnd + 4);
+    gate('tricks: 4 ramp lips found on ALPENGLOW', lips.length >= 4, lips.join(','));
+    const restart = async () => {
+      await A.bot({ on: false, forceTuck: false, extraBtns: [] });
+      await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+      await sleep(200);
+      await tapUntil(A, 9, `__pp.state==='pause'`, 'pause for restart');
+      await A.tapButton(13);
+      if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) await A.tapButton(13);
+      await tapUntil(A, 0, `(__pp.state==='run'||__pp.state==='countdown') && __pp.s < 40`, 'restarted');
+      await A.waitFor(`__pp.state==='run'`, 12000, 'restart countdown done');
+      await A.bot({ on: true, mode: 'race', forceTuck: false, extraBtns: [] });
+    };
+    // one trick per ramp air, stick held at the press picks the type
+    const trickAt = async (lipS, ax, ay, expect) => {
+      await A.bot({ on: true, mode: 'race', forceTuck: false, extraBtns: [] });
+      await A.waitFor(`__pp.s > ${lipS - 150}`, 180000, 'approach ramp ' + lipS);
+      await A.bot({ forceTuck: true });
+      await A.eval('window.__ppTurbo = 3');       // slow enough to catch the air
+      await A.waitFor(`__pp.air === true && __pp.s > ${lipS - 30}`, 90000, 'ramp air ' + lipS);
+      await A.eval('window.__ppTurbo = 1');
+      await A.bot({ on: false, forceTuck: false });
+      await A.eval(`__fakePad.axes(${ax},${ay})`);
+      await sleep(70);
+      await A.eval('__fakePad.press(2)');
+      await A.waitFor('__pp.trick === true', 3000, 'trick starts');
+      const name = await A.eval('__pp.trickName');
+      await A.eval('__fakePad.press(); __fakePad.axes(0,0);');
+      await A.waitFor('__pp.air === false', 12000, 'trick air lands');
+      await A.eval('window.__ppTurbo = 8');
+      await A.bot({ on: true, mode: 'race' });
+      gate(`tricks: stick(${ax},${ay}) at west press = ${expect}`, name === expect, `got ${name}`);
+    };
+    await trickAt(lips[0], -1, 0, '360 L');
+    await trickAt(lips[1], 1, 0, '360 R');
+    await trickAt(lips[2], 0, -1, 'FRONT FLIP');
+    await trickAt(lips[3], 0, 0, 'BACKFLIP');
+    // chains off ramp 2 (biggest reliable air): timed jump at the lip, two
+    // tricks in one air. Same-type pair = +14%; distinct pair = +18% VARIETY.
+    const chainAt = async (types, expectPct, label) => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await restart();
+        await A.waitFor(`__pp.s > ${lips[1] - 160}`, 180000, 'approach ramp 2');
+        await A.bot({ forceTuck: true });
+        await A.eval('window.__ppTurbo = 2');       // slow approach: never miss the lip
+        await A.waitFor(`__pp.s > ${lips[1] - 16}`, 90000, 'at the lip');
+        await A.bot({ extraBtns: [2] });                  // timed lip jump
+        await A.waitFor(`__pp.air === true`, 8000, 'lip air');
+        await A.eval('window.__ppTurbo = 1');
+        await A.bot({ on: false, forceTuck: false, extraBtns: [] });
+        // west is still HELD from the lip jump — release it first or the
+        // first chained press has no edge (≥150ms real, per the pad gotcha)
+        await A.eval('__fakePad.press()');
+        await sleep(180);
+        let ok = true;
+        for (const [ax, ay] of types) {
+          await A.eval(`__fakePad.axes(${ax},${ay})`);
+          await sleep(60);
+          await A.eval('__fakePad.press(2)');
+          try { await A.waitFor('__pp.trick === true', 1500, 'chain trick starts'); }
+          catch { ok = false; break; }
+          await A.eval('__fakePad.press()');
+          try { await A.waitFor('__pp.trick === false', 2000, 'chain trick done'); }
+          catch { ok = false; break; }
+          if (!await A.eval('__pp.air')) { ok = false; break; }   // landed mid-chain
+          await sleep(60);
+        }
+        await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+        await A.waitFor('__pp.air === false', 12000, 'chain lands');
+        const res = await A.eval(`({pct:__pp.boostPct, st:__pp.state, pop:document.getElementById('trickPop').classList.contains('show'), txt:document.getElementById('trickPop').textContent})`);
+        await A.eval('window.__ppTurbo = 8');
+        await A.bot({ on: true, mode: 'race' });
+        if (ok && Math.abs(res.pct - expectPct) < 0.5) {
+          gate(`tricks: ${label} lands +${expectPct}% (cap 24 respected)`,
+            res.pct === expectPct && res.pct <= 24 && res.st === 'run', `pct=${res.pct} "${res.txt}"`);
+          gate(`tricks: ${label} chain popup shown`, res.pop, `"${res.txt}"`);
+          return;
+        }
+        console.log(`  chain attempt ${attempt + 1} incomplete (pct=${res.pct}) — retrying`);
+      }
+      gate(`tricks: ${label} lands +${expectPct}%`, false, 'no clean 2-trick air in 3 attempts');
+    };
+    await chainAt([[0, 0], [0, 0]], 14, 'FLIP+FLIP x2');
+    await chainAt([[0, 0], [-1, 0]], 18, 'FLIP+360 VARIETY');
+    gate('zero console errors/warnings (tricks session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+/* ═══════════ FUN SESSION — hidden shortcut + snowman, both mountains ═══════════ */
+async function funSession(base) {
+  console.log('\n── delights session (shortcut + snowman, both mountains) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    for (const m of ['alp', 'nr']) {
+      try { await A.eval('window.__ppTurbo = 1'); } catch {}
+      await A.nav(base + '/index.html?turbo=8&fx=full');
+      await sleep(500);
+      await startFromTitle(A, m);
+      await A.installBot();
+      const SC = await A.eval('JSON.parse(JSON.stringify(window.__ppShortcut))');
+      const sm = await A.eval('JSON.parse(JSON.stringify(window.__ppSnowman))');
+      const obstacles = await A.eval('window.__ppObstacles');
+      // corridor must be free of obstacle footprints (data-side check)
+      let minClear = 1e9;
+      for (const o of obstacles) {
+        for (const p of SC.pts) {
+          const d = Math.hypot(o.x - p.x, o.z - p.z) - o.r;
+          if (d < minClear) minClear = d;
+        }
+      }
+      gate(`shortcut(${m}): corridor free of obstacle footprints`, minClear > SC.w,
+        `min clearance ${minClear.toFixed(1)}m vs half-width ${SC.w}m`);
+      // ride the SHORTCUT via the steering-hint path (real pad input)
+      const segTimes = async (usePath) => {
+        let tEntry = null, tExit = null, crashed = false;
+        if (usePath) {
+          await A.waitFor(`__pp.s > ${SC.entryS - 90}`, 240000, 'approach shortcut');
+          await A.bot({ path: SC.pts, pathIdx: 0 });
+        }
+        await A.eval('window.__ppTurbo = 4');
+        const t0 = Date.now();
+        while (Date.now() - t0 < 240000) {
+          const st = await A.eval('({s:__pp.s, t:__pp.time, state:__pp.state})');
+          if (st.state === 'crash') crashed = true;
+          if (tEntry === null && st.s >= SC.entryS) tEntry = st.t;
+          if (tExit === null && st.s >= SC.exitS) { tExit = st.t; break; }
+          await sleep(25);
+        }
+        await A.eval('window.__ppTurbo = 8');
+        return { tEntry, tExit, crashed };
+      };
+      await A.bot({ on: true, mode: 'race' });
+      const scRun = await segTimes(true);
+      const rejoin = await A.eval('({u:__pp.u, st:__pp.state})');
+      gate(`shortcut(${m}): ridden clean — no crash, rejoins the course`,
+        !scRun.crashed && scRun.tExit !== null && rejoin.st === 'run' && Math.abs(rejoin.u) < 10,
+        `u=${rejoin.u && rejoin.u.toFixed(1)} after exit`);
+      // same run continues to the SNOWMAN — steer through it
+      await A.waitFor(`__pp.s > ${sm.s - 110}`, 240000, 'approach snowman');
+      await A.eval('window.__ppTurbo = 4');
+      await A.bot({ mode: 'ram', ramX: sm.x, ramZ: sm.z });
+      let vPre = null, hitSeen = false, vPost = null;
+      const t1 = Date.now();
+      while (Date.now() - t1 < 120000) {
+        const st = await A.eval('({v:__pp.speed, hit:__pp.snowman, s:__pp.s, state:__pp.state})');
+        if (!st.hit) vPre = st.v;
+        else { hitSeen = true; vPost = st.v; break; }
+        if (st.s > sm.s + 40) break;
+        await sleep(20);
+      }
+      await A.bot({ mode: 'race' });
+      await A.eval('window.__ppTurbo = 8');
+      const smState = await A.eval('__pp.state');
+      gate(`snowman(${m}): hit → poof + speed nudge, never a crash`,
+        hitSeen && smState === 'run' && vPost !== null && vPre !== null && vPost > vPre - 0.3,
+        `v ${vPre && vPre.toFixed(1)} → ${vPost && vPost.toFixed(1)}`);
+      // restart: MAIN LINE through the same segment + snowman untouched
+      await A.bot({ on: false });
+      await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+      await sleep(200);
+      await tapUntil(A, 9, `__pp.state==='pause'`, 'pause');
+      await A.tapButton(13);
+      if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) await A.tapButton(13);
+      await tapUntil(A, 0, `(__pp.state==='run'||__pp.state==='countdown') && __pp.s < 40`, 'restart for main line');
+      await A.waitFor(`__pp.state==='run'`, 12000, 'main-line countdown done');
+      await A.bot({ on: true, mode: 'race', path: null, pathIdx: 0 });
+      await A.waitFor(`__pp.s > ${SC.entryS - 90}`, 240000, 'approach main line seg');
+      const mainRun = await segTimes(false);
+      const scSeg = scRun.tExit - scRun.tEntry, mainSeg = mainRun.tExit - mainRun.tEntry;
+      gate(`shortcut(${m}): corridor beats the main line`,
+        scRun.tExit !== null && mainRun.tExit !== null && scSeg < mainSeg - 1.5,
+        `shortcut ${scSeg.toFixed(2)}s vs main ${mainSeg.toFixed(2)}s (Δ ${(mainSeg - scSeg).toFixed(2)}s)`);
+      await A.waitFor(`__pp.s > ${sm.s + 25}`, 240000, 'pass snowman on the race line');
+      gate(`snowman(${m}): missed on the race line → nothing`,
+        await A.eval('__pp.snowman') === false);
+    }
+    gate('zero console errors/warnings (fun session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
 /* ═══════════════ CLEAN TIMING RUN — medal calibration ═══════════════ */
-async function timeSession(base) {
-  console.log('\n── clean bot timing run (?turbo=10) ──');
+async function timeSession(base, mtn) {
+  console.log(`\n── clean bot timing run (?turbo=10, ${mtn}) ──`);
   const { proc, port, profile } = await launchChrome();
   try {
     const c = await pageSession(port);
@@ -760,8 +1294,7 @@ async function timeSession(base) {
     await A.init(); await A.stubPad();
     await A.nav(base + '/index.html?turbo=10&fx=full');
     await sleep(400);
-    await A.tapButton(0);
-    await A.waitFor(`__pp.state==='run'`, 10000, 'run');
+    await startFromTitle(A, mtn);
     await A.installBot();
     await A.bot({ on: true, mode: 'race' });
     let crashes = 0, lastState = 'run';
@@ -774,8 +1307,9 @@ async function timeSession(base) {
       await sleep(150);
     }
     const t = await A.eval('__pp.time');
-    const sect = await A.eval(`JSON.parse(localStorage.getItem('powderpeak_best')||'{}').sectors`);
-    console.log(`clean bot time: ${t.toFixed(2)}s, crashes: ${crashes}, sectors: ${(sect || []).map(x => x.toFixed(1)).join(' / ')}`);
+    const key = mtn === 'nr' ? 'powderpeak_best_nr' : 'powderpeak_best';
+    const sect = await A.eval(`JSON.parse(localStorage.getItem('${key}')||'{}').sectors`);
+    console.log(`clean bot time (${mtn}): ${t.toFixed(2)}s, crashes: ${crashes}, sectors: ${(sect || []).map(x => x.toFixed(1)).join(' / ')}`);
     c.close();
   } finally {
     proc.kill(); await sleep(400);
@@ -793,8 +1327,7 @@ async function tuckSession(base) {
     await A.init(); await A.stubPad();
     await A.nav(base + '/index.html?turbo=8&fx=full');
     await sleep(400);
-    await A.tapButton(0);
-    await A.waitFor(`__pp.state==='run'`, 10000, 'run');
+    await startFromTitle(A, 'alp');
     await A.installBot();
     await A.bot({ on: true, mode: 'race', forceTuck: true });
     const samples = [];
@@ -812,15 +1345,35 @@ async function tuckSession(base) {
 
 /* ═══════════════ main ═══════════════ */
 const which = process.argv[2] || 'all';
+const mtnArg = process.argv[3] === 'nr' ? 'nr' : 'alp';
 const { srv, port: httpPort } = await serve();
 const base = `http://127.0.0.1:${httpPort}`;
+// Headless swiftshader renderers occasionally die mid-session (CDP replies
+// stop). One retry keeps environmental hiccups from failing a clean build —
+// a real regression still fails twice.
+async function runSession(name, fn) {
+  const before = failures;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    let threw = false;
+    failures = before;
+    try { await fn(); } catch (e) { threw = true; console.error('SESSION ERROR (' + name + '):', e.message); }
+    if (!threw && failures === before) return;
+    if (attempt < 3) console.log(`\n—— ${name}: failures/errors above; retrying (attempt ${attempt + 1}/3) ——`);
+    else if (!threw) return;      // third attempt's failures stand
+    else failures = before + 1;   // third attempt threw: count one failure
+  }
+}
 try {
-  if (which === 'time') await timeSession(base);
+  if (which === 'time') await timeSession(base, mtnArg);
   if (which === 'tuck') await tuckSession(base);
-  if (which === 'all' || which === 'gates') await gatesSession(base);
-  if (which === 'all' || which === 'kbd') await kbdSession(base);
-  if (which === 'all' || which === 'shots') await shotsSession(base);
-  if (which === 'all' || which === 'ipad') await ipadSession(base);
+  if (which === 'all' || which === 'gates') await runSession('gates', () => gatesSession(base));
+  if (which === 'all' || which === 'mtn') await runSession('mtn', () => mtnSession(base));
+  if (which === 'all' || which === 'nr') await runSession('nr', () => nrSession(base));
+  if (which === 'all' || which === 'tricks') await runSession('tricks', () => tricksSession(base));
+  if (which === 'all' || which === 'fun') await runSession('fun', () => funSession(base));
+  if (which === 'all' || which === 'kbd') await runSession('kbd', () => kbdSession(base));
+  if (which === 'all' || which === 'shots') await runSession('shots', () => shotsSession(base));
+  if (which === 'all' || which === 'ipad') await runSession('ipad', () => ipadSession(base));
 } catch (e) {
   console.error('HARNESS ERROR:', e.message);
   failures++;

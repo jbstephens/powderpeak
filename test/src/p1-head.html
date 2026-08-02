@@ -137,11 +137,13 @@
     writing-mode: horizontal-tb;
   }
 
-  /* trick landing popup — skewed navy panel like the rest of the HUD */
+  /* trick landing popup — skewed navy panel like the rest of the HUD.
+     width follows the chain text ("FLIP + 360 · x2 BOOST · VARIETY!") */
   #trickPop {
-    left: 50%; top: 156px; width: 320px; height: 48px; margin-left: -160px;
+    left: 0; right: 0; margin: 0 auto; top: 156px;
+    width: max-content; min-width: 260px; height: 48px; padding: 0 28px;
     display: flex; align-items: center; justify-content: center;
-    font-size: 23px; font-weight: 700; letter-spacing: 4px; color: #ffd23e;
+    font-size: 21px; font-weight: 700; letter-spacing: 3px; color: #ffd23e;
     opacity: 0; pointer-events: none; will-change: opacity, transform;
   }
   #trickPop.show { animation: trickpop 1.4s ease-out forwards; }
@@ -173,7 +175,7 @@
   }
 
   #hud { position: absolute; inset: 0; pointer-events: none; }
-  body.st-title #hud, body.st-finish #hud .hidefinish { display: none; }
+  body.st-title #hud, body.st-select #hud, body.st-finish #hud .hidefinish { display: none; }
 
   /* ── title screen ── */
   #title { position: absolute; inset: 0; display: none; pointer-events: none; }
@@ -215,6 +217,40 @@
     text-align: center; line-height: 1.9;
   }
 
+  /* ── mountain select ── */
+  #selectScreen {
+    position: absolute; inset: 0;
+    display: none; align-items: center; justify-content: center; gap: 60px;
+  }
+  body.st-select #selectScreen { display: flex; }
+  #selectTitle {
+    position: absolute; left: 50%; top: 58px; transform: translateX(-50%);
+    font-size: 28px; letter-spacing: 10px; font-weight: 700; color: #fff;
+    text-shadow: 0 3px 0 #20233d;
+  }
+  .mcard {
+    width: 384px; background: #20233d; border: 3px solid #12142a;
+    padding: 14px 14px 10px; text-align: center;
+    transform: skewX(-4deg); opacity: 0.68;
+  }
+  .mcard > * { transform: skewX(4deg); }
+  .mcard.sel { opacity: 1; border-color: #ffd23e; }
+  .mcard .mname {
+    font-size: 21px; font-weight: 700; letter-spacing: 5px; color: #fff;
+    margin-bottom: 10px;
+  }
+  .mcard.sel .mname { color: #ffd23e; }
+  .mcard.sel .mname::before { content: '▶ '; color: #ff5964; }
+  .mcard canvas { width: 348px; height: 196px; background: #171930; display: block; margin: 0 auto; }
+  .mcard .mbest { margin-top: 10px; font-size: 14px; font-weight: 700; letter-spacing: 2px; color: #e8ecff; }
+  .mmedal { margin-top: 2px; height: 18px; font-size: 13px; font-weight: 700; letter-spacing: 3px; color: #9aa0c0; }
+  .mmedal.gold { color: #ffd23e; } .mmedal.silver { color: #d8dce8; } .mmedal.bronze { color: #e8945a; }
+  #selectHint {
+    position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 2px; color: #e8ecff;
+    text-shadow: 0 1px 0 #20233d; white-space: nowrap;
+  }
+
   /* ── countdown ── */
   #countdownEl {
     position: absolute; left: 0; right: 0; top: 240px;
@@ -244,6 +280,7 @@
   }
   .mitem.sel { color: #ffd23e; background: #171930; }
   .mitem.sel::before { content: '▶ '; color: #ff5964; }
+  #pauseHint { margin-top: 18px; font-size: 12px; letter-spacing: 2px; color: #9aa0c0; }
 
   /* ── finish ── */
   #finishScreen {
@@ -278,7 +315,7 @@
   /* ── touch controls (touch input source only) ── */
   #touchUI { position: absolute; inset: 0; display: none; pointer-events: none; }
   body.input-touch #touchUI { display: block; }
-  body.st-title #touchUI, body.st-finish #touchUI { display: none; }
+  body.st-title #touchUI, body.st-select #touchUI, body.st-finish #touchUI { display: none; }
   .tzone { position: absolute; top: 0; bottom: 0; width: 50%; pointer-events: auto; }
   #tzoneL { left: 0; } #tzoneR { right: 0; }
   .tbtn {
@@ -348,7 +385,24 @@
     </div>
     <div id="pressStart">PRESS ✕ TO SKI</div>
     <div id="titleBest"></div>
-    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · ▢ JUMP + AIR TRICK · HOLD ○ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE · SPACE JUMP / TRICK</div>
+    <div id="titleHint">STICK CARVE · HOLD ✕ TUCK · ▢ JUMP · ▢+STICK AIR TRICKS · HOLD ○ BRAKE · START PAUSE<br>KEYS: ◄ ► STEER · ▼ TUCK · ▲ BRAKE · SPACE JUMP / +ARROWS TRICKS</div>
+  </div>
+
+  <div id="selectScreen">
+    <div id="selectTitle">CHOOSE YOUR MOUNTAIN</div>
+    <div class="mcard sel" id="mcard0">
+      <div class="mname">ALPENGLOW</div>
+      <canvas id="mthumb0" width="348" height="196"></canvas>
+      <div class="mbest" id="mbest0"></div>
+      <div class="mmedal" id="mmedal0"></div>
+    </div>
+    <div class="mcard" id="mcard1">
+      <div class="mname">NIGHT RIDGE</div>
+      <canvas id="mthumb1" width="348" height="196"></canvas>
+      <div class="mbest" id="mbest1"></div>
+      <div class="mmedal" id="mmedal1"></div>
+    </div>
+    <div id="selectHint">◄ ► CHOOSE · ✕ SKI · ○ BACK</div>
   </div>
 
   <div id="countdownEl"></div>
@@ -358,6 +412,7 @@
       <h2>PAUSED</h2>
       <div class="mitem" id="mi0">RESUME</div>
       <div class="mitem" id="mi1">RESTART RUN</div>
+      <div id="pauseHint">IN AIR: ▢ + STICK = TRICKS</div>
     </div>
   </div>
 
