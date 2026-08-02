@@ -1,0 +1,641 @@
+
+/* ═════════════════ HUD (DOM; text updated only on change) ═════════════════ */
+const el = id => document.getElementById(id);
+const timeText = el('timeText'), speedNum = el('speedNum'), needle = el('needle');
+const profMarker = el('profMarker'), gradePct = el('gradePct');
+const sectorNum = el('sectorNum'), bestChip = el('bestChip');
+const flashEl = el('flash'), splitPopEl = el('splitPop');
+const countdownEl = el('countdownEl'), fadeWhite = el('fadeWhite');
+const titleBest = el('titleBest');
+
+const PROF_W = 268, PROF_H = 56;
+const profPX = new Float32Array(NS), profPY = new Float32Array(NS);
+(function drawProfile() {
+  const ctx = el('profileCanvas').getContext('2d');
+  let yMin = 1e9, yMax = -1e9;
+  for (let i = 0; i < NS; i++) { if (CY[i] < yMin) yMin = CY[i]; if (CY[i] > yMax) yMax = CY[i]; }
+  const px = i => 3 + (i / (NS - 1)) * (PROF_W - 6);
+  const py = i => 6 + (1 - (CY[i] - yMin) / (yMax - yMin)) * (PROF_H - 14);
+  for (let i = 0; i < NS; i++) { profPX[i] = px(i); profPY[i] = py(i); }
+  ctx.fillStyle = '#171930';
+  ctx.fillRect(0, 0, PROF_W, PROF_H);
+  // sector dividers + numbers
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '8px monospace'; ctx.lineWidth = 1;
+  GATES.forEach((gi, n) => {
+    ctx.beginPath(); ctx.moveTo(px(gi) + 0.5, 4); ctx.lineTo(px(gi) + 0.5, PROF_H - 4); ctx.stroke();
+    ctx.fillText(String(n + 1), px(gi) - 8, PROF_H - 5);
+  });
+  ctx.fillText('4', px(FINISH_I) - 8, PROF_H - 5);
+  // the mountain line
+  ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px(0), py(0));
+  for (let i = 2; i < NS; i += 2) ctx.lineTo(px(i), py(i));
+  ctx.stroke();
+  // fill under the line, faint
+  ctx.lineTo(px(NS - 1), PROF_H); ctx.lineTo(px(0), PROF_H); ctx.closePath();
+  ctx.fillStyle = 'rgba(255,210,62,0.10)'; ctx.fill();
+})();
+(function drawGauge() {
+  const ctx = el('gaugeCanvas').getContext('2d');
+  const cx = 79, cy = 78, sweep = 256; // deg, symmetric about straight-up
+  const a2r = a => (a - 90) * Math.PI / 180;
+  ctx.clearRect(0, 0, 190, 158);
+  // arc face
+  ctx.beginPath();
+  ctx.arc(cx, cy, 58, a2r(-sweep / 2), a2r(sweep / 2));
+  ctx.strokeStyle = '#171930'; ctx.lineWidth = 26; ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 58, a2r(-sweep / 2), a2r(sweep / 2));
+  ctx.strokeStyle = '#2b2f52'; ctx.lineWidth = 22; ctx.stroke();
+  // ticks every 10 km/h, majors every 40
+  for (let s2 = 0; s2 <= 140; s2 += 10) {
+    const a = a2r(-sweep / 2 + (s2 / 140) * sweep);
+    const major = s2 % 40 === 0;
+    const r0 = major ? 48 : 53, r1 = 68;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+    ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+    ctx.strokeStyle = major ? '#ffd23e' : 'rgba(255,255,255,0.45)';
+    ctx.lineWidth = major ? 3 : 1.5;
+    ctx.stroke();
+    if (major) {
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(String(s2), cx + Math.cos(a) * 38, cy + Math.sin(a) * 38 + 3);
+    }
+  }
+  // needle hub
+  ctx.beginPath(); ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#171930'; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#ffd23e'; ctx.stroke();
+})();
+function flash(text, color) {
+  flashEl.textContent = text;
+  flashEl.style.color = color || '#fff';
+  flashEl.classList.remove('show');
+  void flashEl.offsetWidth;
+  flashEl.classList.add('show');
+}
+function splitPop(text, cls) {
+  splitPopEl.textContent = text;
+  splitPopEl.className = cls;
+  void splitPopEl.offsetWidth;
+  splitPopEl.classList.add('show');
+}
+function fmtTime(t) {
+  if (t == null || !isFinite(t)) return '--:--.--';
+  const m = Math.floor(t / 60), s2 = Math.floor(t % 60), c = Math.floor((t * 100) % 100);
+  return m + ':' + String(s2).padStart(2, '0') + '.' + String(c).padStart(2, '0');
+}
+function fmtDelta(d) {
+  const sign = d < 0 ? '-' : '+';
+  return sign + Math.abs(d).toFixed(2);
+}
+
+/* ═════════════════ audio — all WebAudio synth, lazy context ═════════════════ */
+let ac = null, master = null, windGain, windFilt, carveGain, noiseBuf;
+function ensureAudio() {
+  if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+  const AC2 = window.AudioContext || window.webkitAudioContext;
+  if (!AC2) return;
+  ac = new AC2();
+  master = ac.createGain(); master.gain.value = 0.85; master.connect(ac.destination);
+  const sr = ac.sampleRate;
+  noiseBuf = ac.createBuffer(1, sr * 2, sr);
+  const d = noiseBuf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  // wind loop — gain/filter ride the speed
+  const windSrc = ac.createBufferSource(); windSrc.buffer = noiseBuf; windSrc.loop = true;
+  windFilt = ac.createBiquadFilter(); windFilt.type = 'bandpass'; windFilt.frequency.value = 300; windFilt.Q.value = 0.6;
+  windGain = ac.createGain(); windGain.gain.value = 0;
+  windSrc.connect(windFilt).connect(windGain).connect(master);
+  windSrc.start();
+  // carve shush loop
+  const carveSrc = ac.createBufferSource(); carveSrc.buffer = noiseBuf; carveSrc.loop = true;
+  const carveFilt = ac.createBiquadFilter(); carveFilt.type = 'highpass'; carveFilt.frequency.value = 1700;
+  carveGain = ac.createGain(); carveGain.gain.value = 0;
+  carveSrc.connect(carveFilt).connect(carveGain).connect(master);
+  carveSrc.start();
+}
+function tone(freq, dur, type, vol, sweepTo, when) {
+  if (!ac) return;
+  const t0 = ac.currentTime + (when || 0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'triangle';
+  o.frequency.setValueAtTime(freq, t0);
+  if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol || 0.08, t0 + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g).connect(master);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function noiseHit(dur, vol, lpStart, lpEnd, when) {
+  if (!ac) return;
+  const t0 = ac.currentTime + (when || 0);
+  const src = ac.createBufferSource(); src.buffer = noiseBuf;
+  const f = ac.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(lpStart, t0);
+  f.frequency.exponentialRampToValueAtTime(Math.max(40, lpEnd), t0 + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f).connect(g).connect(master);
+  src.start(t0); src.stop(t0 + dur + 0.05);
+}
+const sfx = {
+  chime: () => { tone(880, 0.14, 'triangle', 0.09); tone(1318, 0.22, 'triangle', 0.09, null, 0.09); },
+  whoosh: () => noiseHit(0.5, 0.12, 900, 4200),
+  landSoft: () => { noiseHit(0.16, 0.10, 900, 300); tone(90, 0.12, 'sine', 0.10); },
+  landHard: () => { noiseHit(0.24, 0.16, 1100, 250); tone(70, 0.18, 'sine', 0.14); },
+  crash: () => { noiseHit(0.45, 0.20, 700, 120); tone(120, 0.35, 'sine', 0.12, 55); },
+  glance: () => { noiseHit(0.12, 0.10, 1400, 500); },
+  boost: () => { tone(660, 0.10, 'triangle', 0.07, 990); },
+  count: n => tone(n === 0 ? 880 : 440, n === 0 ? 0.3 : 0.12, 'square', 0.06),
+  go: () => { tone(660, 0.16, 'square', 0.07); tone(880, 0.3, 'square', 0.07, null, 0.1); },
+  fanfare: () => {
+    [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, 'triangle', 0.10, null, i * 0.13));
+    tone(1318, 0.5, 'triangle', 0.09, null, 0.55);
+    noiseHit(0.5, 0.05, 6000, 2000, 0.55);
+  },
+  jingle: () => { [659, 880, 1046].forEach((f, i) => tone(f, 0.2, 'triangle', 0.07, null, i * 0.12)); },
+  menuMove: () => tone(520, 0.05, 'square', 0.04),
+  respawn: () => tone(330, 0.2, 'sine', 0.07, 660),
+};
+
+/* ═════════════════ input — pad + keyboard + touch, unified ═════════════════ */
+const AC = window.ArcadeController || null;
+const PAD0 = AC ? AC.pad(0) : null;
+const held = { kSteerL: false, kSteerR: false, kTuck: false, kBrake: false, tSteer: 0, tTuck: false, tBrake: false };
+const edges = { confirm: false, pause: false, up: false, down: false, back: false, any: false };
+let prevLy = 0;
+function clearEdges() {
+  edges.confirm = edges.pause = edges.up = edges.down = edges.back = edges.any = false;
+}
+// filled every frame from all sources; sim reads these
+const inp = { steer: 0, steerTarget: 0, tuck: false, brake: false };
+
+window.addEventListener('keydown', e => {
+  const k = e.key;
+  if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
+  ensureAudio();
+  if (!e.repeat) {
+    edges.any = true;
+    if (k === 'Enter') {
+      if (state === S_RUN || state === S_COUNT) edges.pause = true; else edges.confirm = true;
+    }
+    if (k === ' ' || k === 'z' || k === 'Z') edges.confirm = true;
+    if (k === 'Escape' || k === 'p' || k === 'P') edges.pause = true;
+    if (k === 'ArrowUp' || k === 'w' || k === 'W') edges.up = true;
+    if (k === 'ArrowDown' || k === 's' || k === 'S') edges.down = true;
+    if (k === 'Backspace') edges.back = true;
+  }
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') held.kSteerL = true;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') held.kSteerR = true;
+  if (k === 'ArrowDown' || k === 'z' || k === 'Z') held.kTuck = true;
+  if (k === 'ArrowUp' || k === 'x' || k === 'X') held.kBrake = true;
+});
+window.addEventListener('keyup', e => {
+  const k = e.key;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') held.kSteerL = false;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') held.kSteerR = false;
+  if (k === 'ArrowDown' || k === 'z' || k === 'Z') held.kTuck = false;
+  if (k === 'ArrowUp' || k === 'x' || k === 'X') held.kBrake = false;
+});
+// touch: screen halves steer, corner buttons tuck/brake
+(function touchSetup() {
+  const bind = (id, on, off) => {
+    const n = el(id);
+    n.addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); on(); n.classList.add('held'); }, { passive: false });
+    n.addEventListener('touchend', e => { e.preventDefault(); off(); n.classList.remove('held'); }, { passive: false });
+    n.addEventListener('touchcancel', () => { off(); n.classList.remove('held'); }, { passive: true });
+  };
+  bind('tzoneL', () => { held.tSteer = -0.85; }, () => { if (held.tSteer < 0) held.tSteer = 0; });
+  bind('tzoneR', () => { held.tSteer = 0.85; }, () => { if (held.tSteer > 0) held.tSteer = 0; });
+  bind('tbtnTuck', () => { held.tTuck = true; }, () => { held.tTuck = false; });
+  bind('tbtnBrake', () => { held.tBrake = true; }, () => { held.tBrake = false; });
+  el('tbtnPause').addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); edges.pause = true; }, { passive: false });
+  // tap anywhere = confirm on title/finish; fallback input-touch class if the
+  // controller lib didn't load (it normally handles the body class)
+  window.addEventListener('touchstart', () => {
+    if (!AC && document.body) document.body.classList.add('input-touch');
+    if (state === S_TITLE || state === S_FINISH) { edges.confirm = true; edges.any = true; }
+  }, { capture: true, passive: true });
+})();
+if (AC) {
+  AC.on('press', e => {
+    // never bind home or select — the console shell owns them
+    if (e.padIndex !== 0 || e.button === 'home' || e.button === 'select') return;
+    ensureAudio();
+    edges.any = true;
+  });
+}
+function pollPad() {
+  if (!PAD0 || !PAD0.connected) return 0;
+  let steer = PAD0.axis('lx');
+  if (PAD0.button('left')) steer -= 1;
+  if (PAD0.button('right')) steer += 1;
+  if (PAD0.justPressed('south')) edges.confirm = true;
+  if (PAD0.justPressed('east')) edges.back = true;
+  if (PAD0.justPressed('start')) edges.pause = true;
+  if (PAD0.justPressed('up')) edges.up = true;
+  if (PAD0.justPressed('down')) edges.down = true;
+  const ly = PAD0.axis('ly');
+  if (ly < -0.6 && prevLy >= -0.6) edges.up = true;
+  if (ly > 0.6 && prevLy <= 0.6) edges.down = true;
+  prevLy = ly;
+  return steer;
+}
+function gatherInput() {
+  const padSteer = pollPad();
+  let t = padSteer + held.tSteer + (held.kSteerL ? -1 : 0) + (held.kSteerR ? 1 : 0);
+  inp.steerTarget = clamp(t, -1, 1);
+  inp.tuck = held.kTuck || held.tTuck || !!(PAD0 && PAD0.connected && PAD0.button('south'));
+  inp.brake = held.kBrake || held.tBrake || !!(PAD0 && PAD0.connected && PAD0.button('west'));
+}
+
+/* ═════════════════ game state + physics ═════════════════ */
+const S_TITLE = 'title', S_COUNT = 'countdown', S_RUN = 'run', S_PAUSE = 'pause', S_FINISH = 'finish';
+let state = S_TITLE;
+let TICK = 0;
+
+const P = {
+  x: 0, y: 0, z: 0, heading: 0, v: 0, vy: 0,
+  air: false, crashT: 0, wobbleT: 0, invulnT: 0, stuckT: 0,
+  curI: 2, s: 0, u: 0, grade: 0, latSlope: 0,
+  launchHeading: 0, groundVy: 0,
+};
+let lastGateIdx = 0;           // 0=start, 1..3 gates
+let timerStartTick = -1, finalTime = 0, runTime = 0;
+let sectorStartTime = 0;
+let curSectors = [0, 0, 0, 0];
+let cdT = 0, cdShown = -1;
+let finishShowT = 0;
+let pauseSel = 0, pausedFrom = S_RUN;
+let respawnFadeT = 0;
+
+let best = null;
+try { best = JSON.parse(localStorage.getItem(BEST_KEY)); } catch (e) { best = null; }
+if (best && typeof best.time !== 'number') best = null;
+
+function setBodyState(s2) {
+  const cls = document.body.classList;
+  cls.remove('st-title', 'st-count', 'st-run', 'st-pause', 'st-finish');
+  cls.add('st-' + (s2 === S_COUNT ? 'count' : s2));
+}
+
+function placeAtSample(i) {
+  P.curI = i;
+  P.x = CX[i]; P.z = CZ[i];
+  P.heading = Math.atan2(CDX[i], CDZ[i]);
+  P.y = terrainH(P.x, P.z);
+  P.vy = 0; P.air = false; P.crashT = 0; P.wobbleT = 0;
+  P.s = i * STEP;
+}
+function startRun() {
+  placeAtSample(2);
+  P.v = 0; P.invulnT = 0; P.stuckT = 0;
+  lastGateIdx = 0;
+  timerStartTick = -1; runTime = 0; finalTime = 0;
+  sectorStartTime = 0;
+  curSectors = [0, 0, 0, 0];
+  cdT = 1.9; cdShown = -1;
+  state = S_COUNT;
+  setBodyState(S_COUNT);
+  countdownEl.style.display = 'block';
+  sectorNum.textContent = '1';
+  inp.steer = 0;
+}
+function gotoTitle() {
+  state = S_TITLE;
+  setBodyState(S_TITLE);
+  countdownEl.style.display = 'none';
+  titleBest.textContent = best ? ('BEST ' + fmtTime(best.time)) : '';
+}
+function respawnAtCheckpoint(fade) {
+  const i = lastGateIdx === 0 ? 3 : GATES[lastGateIdx - 1];
+  placeAtSample(i);
+  P.v = 6; P.invulnT = 1.0; P.stuckT = 0;
+  if (fade) {
+    fadeWhite.style.opacity = '0.9';
+    respawnFadeT = 0.05;
+  }
+  sfx.respawn();
+}
+function startCrash() {
+  P.crashT = 1.2;
+  P.air = false;
+  sfx.crash();
+  if (window.ArcadeController) ArcadeController.rumble(0, { duration: 450, strong: 0.9, weak: 0.6 });
+  spawnSpray(P.x, P.y + 0.5, P.z,
+    -Math.sin(P.heading) * P.v * 0.25, 2.5, -Math.cos(P.heading) * P.v * 0.25, 4.5, 60);
+}
+
+function finishRun() {
+  finalTime = runTime;
+  curSectors[3] = finalTime - sectorStartTime;
+  state = S_FINISH;
+  finishShowT = 0.9;
+  sfx.fanfare();
+  flash('FINISH', '#ffd23e');
+  // medal + best bookkeeping
+  const medal = finalTime <= MEDALS.gold ? 'GOLD' : finalTime <= MEDALS.silver ? 'SILVER' : finalTime <= MEDALS.bronze ? 'BRONZE' : '';
+  const isBest = !best || finalTime < best.time;
+  const prevBest = best;
+  if (isBest) {
+    best = { time: finalTime, sectors: curSectors.slice() };
+    try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {}
+  }
+  const ml = el('medalLine');
+  ml.textContent = medal ? (medal + ' MEDAL') : 'FINISHER';
+  ml.className = medal.toLowerCase();
+  el('finalTime').textContent = fmtTime(finalTime);
+  el('newBest').textContent = isBest ? 'NEW BEST TIME!' : (prevBest ? 'BEST ' + fmtTime(prevBest.time) : '');
+  let rows = '';
+  for (let k = 0; k < 4; k++) {
+    const ref = prevBest && prevBest.sectors ? prevBest.sectors[k] : null;
+    const d = ref != null ? curSectors[k] - ref : null;
+    rows += '<tr><td>SECTOR ' + (k + 1) + '</td><td>' + fmtTime(curSectors[k]) + '</td><td class="d ' +
+      (d == null ? '' : d <= 0 ? 'good' : 'bad') + '">' + (d == null ? '' : fmtDelta(d)) + '</td></tr>';
+  }
+  el('splitTable').innerHTML = rows;
+  bestChip.textContent = fmtTime(best.time);
+  setBodyState(S_FINISH);
+}
+
+function passGate(n) { // n = 1..3
+  lastGateIdx = n;
+  const sec = runTime - sectorStartTime;
+  curSectors[n - 1] = sec;
+  sectorStartTime = runTime;
+  const ref = best && best.sectors ? best.sectors[n - 1] : null;
+  if (ref != null) {
+    const d = sec - ref;
+    splitPop(fmtDelta(d), d <= 0 ? 'good' : 'bad');
+  } else {
+    splitPop(fmtTime(sec), 'neutral');
+  }
+  flash('CHECKPOINT', '#7de8e0');
+  sectorNum.textContent = String(n + 1);
+  sfx.chime();
+}
+
+/* obstacle collision — CSR query, zero allocation */
+function collideObstacles() {
+  const cx0 = clamp(Math.floor((P.x - OCELL - HX0) / OCELL), 0, OW - 1);
+  const cx1 = clamp(Math.floor((P.x + OCELL - HX0) / OCELL), 0, OW - 1);
+  const cz0 = clamp(Math.floor((P.z - OCELL - HZ0) / OCELL), 0, OH - 1);
+  const cz1 = clamp(Math.floor((P.z + OCELL - HZ0) / OCELL), 0, OH - 1);
+  for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
+    const c = cz * OW + cx;
+    for (let k = obsStart[c]; k < obsStart[c + 1]; k++) {
+      const o = obsItems[k];
+      const dx = P.x - OX[o], dz = P.z - OZ[o];
+      const rr = OR[o] + 0.45;
+      const d2 = dx * dx + dz * dz;
+      if (d2 >= rr * rr) continue;
+      const d = Math.sqrt(d2) || 0.01;
+      // push out of the trunk either way
+      P.x = OX[o] + dx / d * rr;
+      P.z = OZ[o] + dz / d * rr;
+      if (P.v > 11) { startCrash(); return true; }
+      // low-speed glance: wobble + scrub, keep skiing
+      P.v *= 0.55;
+      P.wobbleT = 0.8;
+      sfx.glance();
+      if (window.ArcadeController) ArcadeController.rumble(0, { duration: 130, strong: 0.4, weak: 0.3 });
+      return false;
+    }
+  }
+  return false;
+}
+
+const wrapAngle = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+
+function tickSim() {
+  if (state === S_TITLE || state === S_PAUSE) return;
+  TICK++;
+  if (state === S_COUNT) {
+    cdT -= DT;
+    const n = Math.max(0, Math.ceil(cdT / 0.6));
+    if (n !== cdShown) {
+      cdShown = n;
+      countdownEl.textContent = n > 0 ? String(n) : '';
+      if (n > 0) sfx.count(n);
+    }
+    if (cdT <= 0) {
+      state = S_RUN;
+      setBodyState(S_RUN);
+      countdownEl.style.display = 'none';
+      timerStartTick = TICK;
+      P.v = 3;                       // the push out of the start gate
+      flash('GO!', '#63e58b');
+      sfx.go();
+    }
+    syncTelemetry();
+    return;
+  }
+  if (timerStartTick >= 0 && state === S_RUN) runTime = (TICK - timerStartTick) * DT;
+
+  /* crash tumble: slide, decay, then respawn at the checkpoint */
+  if (P.crashT > 0) {
+    P.crashT -= DT;
+    P.v = Math.max(0, P.v - 14 * DT);
+    P.x += Math.sin(P.heading) * P.v * DT;
+    P.z += Math.cos(P.heading) * P.v * DT;
+    P.y = terrainH(P.x, P.z);
+    if (P.crashT <= 0) respawnAtCheckpoint(true);
+    syncTelemetry();
+    return;
+  }
+
+  /* steering (smoothed toward the summed target) */
+  const wobble = P.wobbleT > 0;
+  if (P.wobbleT > 0) P.wobbleT -= DT;
+  if (P.invulnT > 0) P.invulnT -= DT;
+  inp.steer += clamp(inp.steerTarget - inp.steer, -8 * DT, 8 * DT);
+  let steer = inp.steer * (wobble ? 0.4 : 1);
+  const finishing = state === S_FINISH;
+  if (finishing) steer = 0;
+
+  const tuck = !finishing && inp.tuck && !P.air;
+  const brake = finishing || (inp.brake && !P.air);
+
+  const turnRate = steer * (2.7 / (1 + P.v / 22)) * (tuck ? 0.55 : 1) * (P.air ? 0.25 : 1)
+    * clamp(P.v / 3, 0.35, 1);      // skis can't pivot in place
+  P.heading += turnRate * DT;
+  if (wobble) P.heading += Math.sin(TICK * 0.5) * 0.010 * Math.min(1, P.wobbleT);
+
+  const dirx = Math.sin(P.heading), dirz = Math.cos(P.heading);
+
+  if (!P.air) {
+    const g = terrainGrad(P.x, P.z);
+    const slopeAlong = g.x * dirx + g.z * dirz;   // + = uphill ahead
+    P.grade = slopeAlong;
+    P.latSlope = g.x * dirz - g.z * dirx;
+    // accelerate down the fall line component we're pointed along
+    P.v += (-slopeAlong) * 9.81 * DT;
+    // drags: air (tuck helps), rolling, carving scrub, brake, deep snow
+    const cd = tuck ? 0.0020 : 0.0042;
+    P.v -= cd * P.v * P.v * DT;
+    P.v -= 0.010 * 9.81 * DT;
+    P.v -= Math.abs(turnRate) * P.v * 0.034 * DT;
+    if (brake) P.v -= 4.4 * DT;
+    const du = Math.abs(P.u) - CW[P.curI];
+    if (du > 1) {
+      const deep = Math.min(1, (du - 1) / 4);
+      P.v -= deep * (0.10 * 9.81 + 0.02 * P.v * P.v) * DT;
+    }
+    if (P.v < 0) P.v = 0;
+  } else {
+    P.vy -= 9.81 * 1.15 * DT;
+  }
+
+  /* advance */
+  P.x += dirx * P.v * DT;
+  P.z += dirz * P.v * DT;
+  const h = terrainInfo(P.x, P.z);
+  const hNow = h.h;
+  P.u = h.u;
+  const domI = h.i >= 0 ? h.i : P.curI;
+
+  if (!P.air) {
+    const dy = hNow - P.y;
+    if (dy < -0.30 && P.v > 8) {
+      // ground fell away — we're flying
+      P.air = true;
+      P.vy = Math.max(P.groundVy, -2);
+      P.launchHeading = P.heading;
+      sfx.whoosh();
+    } else {
+      P.groundVy = dy / DT;
+      P.y = hNow;
+    }
+  }
+  if (P.air) {
+    P.y += P.vy * DT;
+    if (P.y <= hNow) {
+      P.y = hNow;
+      P.air = false;
+      P.groundVy = 0;
+      const dphi = Math.abs(wrapAngle(P.heading - P.launchHeading));
+      spawnSpray(P.x, P.y + 0.2, P.z, 0, 1.5, 0, 3.5, 26);
+      if (dphi < 0.16) {
+        P.v = Math.min(P.v * 1.06 + 0.5, 42);
+        sfx.boost();
+        if (window.ArcadeController) ArcadeController.rumble(0, { duration: 80, strong: 0.25, weak: 0.35 });
+      } else if (dphi > 0.45) {
+        P.v *= 0.86;
+        P.wobbleT = 0.9;
+        sfx.landHard();
+        if (window.ArcadeController) ArcadeController.rumble(0, { duration: 160, strong: 0.5, weak: 0.4 });
+      } else {
+        sfx.landSoft();
+      }
+    }
+  }
+
+  /* course progress (windowed nearest — cheap, monotonic) */
+  {
+    let j = P.curI;
+    const lim = Math.min(NS - 1, j + 14);
+    let bd = (P.x - CX[j]) * (P.x - CX[j]) + (P.z - CZ[j]) * (P.z - CZ[j]);
+    for (let k = j + 1; k <= lim; k++) {
+      const dd = (P.x - CX[k]) * (P.x - CX[k]) + (P.z - CZ[k]) * (P.z - CZ[k]);
+      if (dd <= bd) { bd = dd; j = k; }
+    }
+    const prevI = P.curI;
+    P.curI = j;
+    P.s = j * STEP;
+    // ramp lips auto-launch (the blend kernel rounds the lip off, so the
+    // "ground fell away" check alone can shave the jump at low frame heights)
+    if (!P.air && P.v > 8 && Math.abs(P.u) < 5.2) {
+      for (let ri = 0; ri < RAMPS.length; ri++) {
+        const l = RAMPS[ri];
+        if (prevI < l && j >= l) {
+          P.air = true;
+          P.vy = clamp(P.v * 0.17, 1.5, 6.5);
+          P.launchHeading = P.heading;
+          sfx.whoosh();
+          break;
+        }
+      }
+    }
+    if (state === S_RUN) {
+      for (let gi = 0; gi < GATES.length; gi++) {
+        if (prevI < GATES[gi] && j >= GATES[gi]) passGate(gi + 1);
+      }
+      if (prevI < FINISH_I && j >= FINISH_I) finishRun();
+    }
+  }
+
+  /* ridge fences: soft invisible rail at the cliff edge */
+  {
+    const wHere = CW[domI] + 1.5;
+    if (CWL[domI] < -0.2 && P.u < -wHere) {
+      const over = -wHere - P.u;
+      P.x += CRX[domI] * over; P.z += CRZ[domI] * over;
+      P.u = -wHere;
+      P.v *= 0.985; P.wobbleT = Math.max(P.wobbleT, 0.3);
+    } else if (CWR[domI] < -0.2 && P.u > wHere) {
+      const over = P.u - wHere;
+      P.x -= CRX[domI] * over; P.z -= CRZ[domI] * over;
+      P.u = wHere;
+      P.v *= 0.985; P.wobbleT = Math.max(P.wobbleT, 0.3);
+    }
+  }
+
+  /* trees & rocks */
+  if (!P.air && P.invulnT <= 0 && state === S_RUN) collideObstacles();
+
+  /* way off course, or hopelessly stuck → gentle respawn */
+  if (state === S_RUN) {
+    const au = Math.abs(P.u);
+    if (au > 42 || h.d > 70) { respawnAtCheckpoint(true); }
+    else if (P.v < 1 && au > CW[domI] + 1 && !P.air) {
+      P.stuckT += DT;
+      if (P.stuckT > 1.6) respawnAtCheckpoint(true);
+    } else P.stuckT = 0;
+  }
+
+  /* snow spray while carving / braking */
+  if (!P.air && P.v > 4 && P.crashT <= 0) {
+    const carveAmt = Math.abs(inp.steer) * P.v * 0.05 + (brake ? P.v * 0.07 : 0);
+    if (carveAmt > 0.35) {
+      const n = Math.min(4, Math.ceil(carveAmt * 0.8));
+      const bx = P.x - dirx * 0.9, bz = P.z - dirz * 0.9;
+      spawnSpray(bx, P.y + 0.15, bz,
+        -dirx * P.v * 0.15 - dirz * inp.steer * 2.5,
+        0.8 + carveAmt * 0.25,
+        -dirz * P.v * 0.15 + dirx * inp.steer * 2.5,
+        1.6, n);
+    }
+  }
+
+  /* particles integrate on the fixed clock */
+  for (let i = 0; i < SPRAY_N; i++) {
+    if (sprayLife[i] <= 0) continue;
+    sprayLife[i] -= DT;
+    if (sprayLife[i] <= 0) { sprayPos[i * 3 + 1] = -999; continue; }
+    sprayVel[i * 3 + 1] -= 7 * DT;
+    sprayPos[i * 3] += sprayVel[i * 3] * DT;
+    sprayPos[i * 3 + 1] += sprayVel[i * 3 + 1] * DT;
+    sprayPos[i * 3 + 2] += sprayVel[i * 3 + 2] * DT;
+  }
+  if (SNOWFALL_N > 0) {
+    for (let i = 0; i < SNOWFALL_N; i++) {
+      let sy = snowPos[i * 3 + 1] - 3.2 * DT;
+      snowPos[i * 3] += Math.sin((TICK * DT) * 0.7 + i) * 0.35 * DT;
+      if (sy < 0) sy += 46;
+      snowPos[i * 3 + 1] = sy;
+    }
+  }
+
+  /* finish glide-out: bleed speed, sit down the run */
+  if (state === S_FINISH && P.v > 0.4) {
+    P.v = Math.max(0, P.v - 3.5 * DT);
+  }
+
+  syncTelemetry();
+}

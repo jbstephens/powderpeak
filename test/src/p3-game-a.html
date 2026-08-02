@@ -1,0 +1,295 @@
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   POWDER PEAK — a Stephens Arcade downhill time trial.
+   3D third-person skiing, one authored mountain, flat-shaded low-poly.
+   Pi 5 target: 1280x720@60. Everything below is built in code — no assets.
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+'use strict';
+
+/* ───────────────────────── config / flags ───────────────────────── */
+const VW = 1280, VH = 720;
+const DT = 1 / 60;
+const SEED = 20260802;
+
+const QS = new URLSearchParams(location.search);
+// Console low-fx mode: launcher passes ?fx=low once, then it persists.
+let LOWFX = false;
+try {
+  if (QS.get('fx') === 'low') { LOWFX = true; localStorage.setItem('arcade_lowfx', '1'); }
+  else if (QS.get('fx') === 'full') { localStorage.setItem('arcade_lowfx', '0'); }
+  else { LOWFX = localStorage.getItem('arcade_lowfx') === '1'; }
+} catch (e) { LOWFX = false; }
+// ?turbo=N (testing only): run N real sim ticks per rAF so the harness can
+// play the whole course fast. Same sim, same input path — just more ticks.
+const TURBO = Math.min(30, Math.max(0, parseInt(QS.get('turbo') || '0', 10) || 0));
+
+const BEST_KEY = 'powderpeak_best';
+// Medal thresholds (seconds) vs the authored run. Tuned against the
+// verification bot: bot with clean-ish line ≈ gold - a few seconds.
+const MEDALS = { gold: 100, silver: 118, bronze: 150 };
+
+/* ───────────────────────── tiny math utils ───────────────────────── */
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smoothstep = t => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t);
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rng = mulberry32(SEED);
+
+// 2D value noise (seeded, deterministic) — terrain lumps, tree density.
+function hash2(ix, iz) {
+  let n = (ix * 374761393 + iz * 668265263 + SEED * 69069) | 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return (((n ^ (n >>> 16)) >>> 0) / 4294967295) * 2 - 1;
+}
+function vnoise(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const fx = x - ix, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const a = hash2(ix, iz), b = hash2(ix + 1, iz);
+  const c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+  return lerp(lerp(a, b, sx), lerp(c, d, sx), sz);
+}
+function noise2(x, z) { // two octaves is plenty for snow
+  return vnoise(x, z) + 0.5 * vnoise(x * 2.13 + 7.3, z * 2.13 - 3.1);
+}
+
+/* ───────────────────────── course definition ─────────────────────────
+   A winding piste descending the mountain. Authored as segments:
+   len (m), hdg = heading at segment END (deg, + = right of fall line),
+   grade (drop per meter), w (piste half-width m), style, flags.        */
+const ST_OPEN = 0, ST_SLALOM = 1, ST_HAIRPIN = 2, ST_RIDGE = 3;
+const SEGS = [];
+function S(len, hdg, grade, w, style, flags) {
+  SEGS.push({ len, hdg, grade, w, style: style || ST_OPEN,
+              ramp: !!(flags && flags.ramp), gate: !!(flags && flags.gate) });
+}
+function slalomRun(count, period, amp, grade, w) {
+  let a = -amp;
+  for (let i = 0; i < count; i++) { S(period, a, grade, w, ST_SLALOM); a = -a; }
+}
+/* summit plateau → fast sweepers → ramp → slalom woods → hairpins →
+   ridge traverse over the canyon → final schuss → finish meadow */
+S(60, 0, .13, 12);                       // start ramp out of the gate
+S(120, 33, .21, 11);                     // fast sweepers
+S(120, -30, .23, 11);
+S(70, -30, .19, 10, ST_OPEN, { ramp: 1 });   // RAMP 1
+S(80, 0, .16, 10, ST_OPEN, { gate: 1 });     // GATE 1 at end
+S(45, 24, .12, 8.5, ST_SLALOM);          // into the woods
+slalomRun(6, 33, 26, .12, 8);
+S(65, 66, .13, 9);                       // traverse right…
+S(58, -62, .10, 9, ST_HAIRPIN);          // HAIRPIN 1 (chevrons)
+S(112, -20, .21, 10, ST_OPEN, { gate: 1 }); // GATE 2
+S(65, -4, .24, 11, ST_OPEN, { ramp: 1 });   // RAMP 2
+S(65, 16, .22, 11);
+slalomRun(6, 26, 30, .13, 7.5);          // tighter woods
+S(72, -73, .15, 9, ST_RIDGE);            // canyon rim (fence!)
+S(66, 95, .09, 9, ST_HAIRPIN);           // HAIRPIN 2 — full switchback
+S(90, 40, .20, 10, ST_RIDGE);
+S(120, -12, .22, 11, ST_OPEN, { ramp: 1, gate: 1 }); // RAMP 3, GATE 3
+slalomRun(5, 31, 22, .14, 8);            // boulder garden slalom
+S(60, 55, .12, 9);
+S(52, -58, .09, 9, ST_HAIRPIN);          // HAIRPIN 3
+S(130, -4, .26, 12, ST_OPEN, { ramp: 1 });  // RAMP 4 — the schuss
+S(115, 4, .21, 13);                      // FINISH at end of this one
+S(70, 0, .05, 14);                       // runout meadow
+
+/* ── integrate segments into dense samples every 3 m ── */
+const STEP = 3;
+let COURSE_LEN = 0;
+for (const sg of SEGS) COURSE_LEN += sg.len;
+const NS = Math.floor(COURSE_LEN / STEP) + 1;
+// struct-of-arrays: hot path (terrain queries) reads these constantly
+const CX = new Float32Array(NS), CZ = new Float32Array(NS), CY = new Float32Array(NS);
+const CDX = new Float32Array(NS), CDZ = new Float32Array(NS);   // travel dir
+const CRX = new Float32Array(NS), CRZ = new Float32Array(NS);   // right vector
+const CCURV = new Float32Array(NS), CW = new Float32Array(NS);
+const CBANK = new Float32Array(NS), CRAMP = new Float32Array(NS);
+const CWL = new Float32Array(NS), CWR = new Float32Array(NS);   // wall slopes
+const CSTYLE = new Uint8Array(NS);
+const GATES = [];           // sample indices of checkpoint gates (3 of them)
+const RAMPS = [];           // sample indices of ramp lips
+let FINISH_I = NS - 1;      // finish-line sample index
+
+(function buildCourse() {
+  let x = 0, z = 0, y = 0, hdg = 0, s = 0, i = 0;
+  let grade = SEGS[0].grade, wl = 0.55, wr = 0.55, wsm = SEGS[0].w;
+  let segStartHdg = 0;
+  let seg = 0, segS = 0;
+  const D2R = Math.PI / 180;
+  while (i < NS && seg < SEGS.length) {
+    const sg = SEGS[seg];
+    const t = smoothstep(segS / sg.len);
+    const targetHdg = lerp(segStartHdg, sg.hdg, t);
+    const prevHdg = hdg;
+    hdg = targetHdg;
+    const phi = hdg * D2R;
+    const dx = Math.sin(phi), dz = Math.cos(phi);
+    // smooth grade + side-wall style toward this segment's values
+    grade += (sg.grade - grade) * (STEP / 22);
+    wsm += (sg.w - wsm) * (STEP / 16);
+    let twl, twr;
+    if (sg.style === ST_RIDGE) { twl = -0.85; twr = 0.80; }
+    else if (sg.style === ST_HAIRPIN) {
+      // outer wall high, inner drops gently away
+      const right = sg.hdg > segStartHdg;
+      twl = right ? 0.95 : 0.22; twr = right ? 0.22 : 0.95;
+    }
+    else if (sg.style === ST_SLALOM) { twl = 0.34; twr = 0.34; }
+    else { twl = 0.55; twr = 0.55; }
+    wl += (twl - wl) * (STEP / 18);
+    wr += (twr - wr) * (STEP / 18);
+
+    CX[i] = x; CZ[i] = z;
+    // gentle rollers on the open sections make the piste feel alive
+    const roll = (sg.style === ST_OPEN ? 0.55 : 0.15) *
+      (Math.sin(s * 0.105) + 0.6 * Math.sin(s * 0.041 + 2.0));
+    CY[i] = y + roll;
+    CDX[i] = dx; CDZ[i] = dz;
+    CRX[i] = dz; CRZ[i] = -dx;
+    const curv = ((hdg - prevHdg) * D2R) / STEP;
+    CCURV[i] = curv;
+    CW[i] = wsm;
+    CBANK[i] = clamp(curv * 7, -0.32, 0.32);
+    CWL[i] = wl; CWR[i] = wr;
+    CSTYLE[i] = sg.style;
+
+    x += dx * STEP; z += dz * STEP; y -= grade * STEP;
+    s += STEP; segS += STEP;
+    i++;
+    if (segS >= sg.len) {
+      if (sg.gate) GATES.push(i - 1);
+      if (sg.ramp) RAMPS.push(i - 2);
+      if (seg === SEGS.length - 2) FINISH_I = i - 1;
+      segS -= sg.len; segStartHdg = sg.hdg; seg++;
+    }
+  }
+  // smooth centreline height a touch (kills any integration kinks)
+  for (let p = 0; p < 2; p++) {
+    for (let j = 1; j < NS - 1; j++) CY[j] = (CY[j - 1] + CY[j] * 2 + CY[j + 1]) * 0.25;
+  }
+  // bake ramp kickers: 16 m cubic rise to a 2.3 m lip, then terrain drops
+  for (const li of RAMPS) {
+    for (let j = 0; j <= Math.floor(16 / STEP); j++) {
+      const idx = li - Math.floor(16 / STEP) + j;
+      if (idx < 0 || idx >= NS) continue;
+      const t = (idx - (li - 16 / STEP)) / (16 / STEP);
+      CRAMP[idx] = 2.3 * t * t * t;
+    }
+  }
+})();
+
+/* ───────────────── spatial hash over course samples (CSR) ───────────────── */
+const HCELL = 16;
+let HX0 = 1e9, HZ0 = 1e9, HX1 = -1e9, HZ1 = -1e9;
+for (let i = 0; i < NS; i++) {
+  if (CX[i] < HX0) HX0 = CX[i]; if (CX[i] > HX1) HX1 = CX[i];
+  if (CZ[i] < HZ0) HZ0 = CZ[i]; if (CZ[i] > HZ1) HZ1 = CZ[i];
+}
+HX0 -= 96; HZ0 -= 96; HX1 += 96; HZ1 += 96;
+const HW = Math.ceil((HX1 - HX0) / HCELL), HH = Math.ceil((HZ1 - HZ0) / HCELL);
+const hashStart = new Int32Array(HW * HH + 1);
+let hashItems;
+(function buildHash() {
+  const counts = new Int32Array(HW * HH);
+  const cellOf = i => {
+    const cx = Math.floor((CX[i] - HX0) / HCELL), cz = Math.floor((CZ[i] - HZ0) / HCELL);
+    return cz * HW + cx;
+  };
+  for (let i = 0; i < NS; i++) counts[cellOf(i)]++;
+  let acc = 0;
+  for (let c = 0; c < HW * HH; c++) { hashStart[c] = acc; acc += counts[c]; }
+  hashStart[HW * HH] = acc;
+  hashItems = new Int32Array(acc);
+  const cursor = hashStart.slice(0, HW * HH);
+  for (let i = 0; i < NS; i++) { const c = cellOf(i); hashItems[cursor[c]++] = i; }
+})();
+
+/* ─────────────────────── terrain height function ───────────────────────
+   THE ground truth. Both the visual mesh and the physics sample this, so
+   the skier is always exactly on the snow you see. Height at (x,z) is a
+   blend of nearby course samples' cross-profiles, weighted by an
+   elliptical distance (tight along-track, wide laterally) so hairpin legs
+   blend into each other naturally without disturbing the piste itself.  */
+const R_LAT = 76;           // lateral influence reach (m)
+const ALONG = 4;            // along-track distance is scaled 4x tighter
+
+// per-sample cross-profile: piste (banked, flat) → berm → walls/cliff
+function profileY(j, u, nA, nB) {
+  const w = CW[j];
+  const au = u < 0 ? -u : u;
+  let y = CY[j];
+  // ramp kicker (fades out laterally so you can skirt around it)
+  if (CRAMP[j] > 0 && au < 5.2) {
+    const t = au < 3.4 ? 1 : (5.2 - au) / 1.8;
+    y += CRAMP[j] * (t * t * (3 - 2 * t));
+  }
+  if (au <= w) return y - CBANK[j] * u;
+  const du = au - w;
+  y -= CBANK[j] * (u < 0 ? -w : w);
+  const ws = u < 0 ? CWL[j] : CWR[j];
+  if (ws >= 0) {
+    y += ws * du + 0.012 * du * du;
+  } else {
+    // cliff: drop to a canyon floor, then the far wall rises again
+    y += Math.max(ws * du, -13);
+    if (du > 30) y += 0.5 * (du - 30);
+  }
+  // lumpy deep snow off the groomed line
+  const env = du < 7 ? du / 7 : 1;
+  y += env * (nA * 1.7 + nB * 3.1);
+  return y;
+}
+
+// scratch result of terrainInfo — reused, never allocated per call
+const TI = { h: 0, i: 0, u: 0, d: 1e9 };
+function terrainInfo(x, z) {
+  const nA = noise2(x * 0.09, z * 0.09);
+  const nB = noise2(x * 0.021 + 31.7, z * 0.021 - 12.9);
+  const cx0 = Math.max(0, Math.floor((x - R_LAT - HX0) / HCELL));
+  const cx1 = Math.min(HW - 1, Math.floor((x + R_LAT - HX0) / HCELL));
+  const cz0 = Math.max(0, Math.floor((z - R_LAT - HZ0) / HCELL));
+  const cz1 = Math.min(HH - 1, Math.floor((z + R_LAT - HZ0) / HCELL));
+  let sw = 0, sy = 0, best = -1, bestD = 1e9, bestU = 0;
+  for (let cz = cz0; cz <= cz1; cz++) {
+    for (let cx = cx0; cx <= cx1; cx++) {
+      const c = cz * HW + cx;
+      for (let k = hashStart[c]; k < hashStart[c + 1]; k++) {
+        const j = hashItems[k];
+        const ddx = x - CX[j], ddz = z - CZ[j];
+        const a = ddx * CDX[j] + ddz * CDZ[j];
+        const u = ddx * CRX[j] + ddz * CRZ[j];
+        const de = Math.sqrt(ALONG * ALONG * a * a + u * u);
+        if (de >= R_LAT) continue;
+        let wgt = 1 - de / R_LAT;
+        wgt = wgt * wgt; wgt = wgt * wgt * wgt;      // ^6: nearest dominates
+        sw += wgt; sy += wgt * profileY(j, u, nA, nB);
+        if (de < bestD) { bestD = de; best = j; bestU = u; }
+      }
+    }
+  }
+  if (sw > 0) { TI.h = sy / sw; TI.i = best; TI.u = bestU; TI.d = bestD; }
+  else { TI.h = 500; TI.i = -1; TI.u = 0; TI.d = 1e9; }
+  return TI;
+}
+function terrainH(x, z) { return terrainInfo(x, z).h; }
+
+// slope gradient (numeric) — physics pulls the skier down this
+const GRAD = { x: 0, z: 0 };
+function terrainGrad(x, z) {
+  const e = 1.4;
+  const hx1 = terrainH(x + e, z), hx0 = terrainH(x - e, z);
+  const hz1 = terrainH(x, z + e), hz0 = terrainH(x, z - e);
+  GRAD.x = (hx1 - hx0) / (2 * e);
+  GRAD.z = (hz1 - hz0) / (2 * e);
+  return GRAD;
+}

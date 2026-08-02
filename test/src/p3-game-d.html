@@ -1,0 +1,290 @@
+
+/* ═════════════════ telemetry (read-only; the harness waits on tick) ═════════ */
+const TL = {
+  tick: 0, state: 'title', speed: 0, pos: { x: 0, y: 0, z: 0 }, checkpoint: 0,
+  mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
+  perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
+};
+window.__pp = TL;
+function syncTelemetry() {
+  TL.tick = TICK;
+  TL.state = (state === S_RUN && P.crashT > 0) ? 'crash' : state;
+  TL.speed = P.v;
+  TL.pos.x = P.x; TL.pos.y = P.y; TL.pos.z = P.z;
+  TL.checkpoint = lastGateIdx;
+  TL.mode = P.air ? 'air' : (P.crashT > 0 ? 'crash' : 'ground');
+  TL.heading = P.heading;
+  TL.s = P.s; TL.u = P.u; TL.time = runTime;
+}
+// static course/obstacle dumps — data a player can see, for the harness bot
+(function dumpStatics() {
+  const c = [];
+  for (let i = 0; i < NS; i += 3) {
+    c.push({ i, s: i * STEP, x: CX[i], y: CY[i], z: CZ[i], curv: CCURV[i], w: CW[i], style: CSTYLE[i], ramp: CRAMP[i] });
+  }
+  window.__ppCourse = c;
+  const o = [];
+  for (let i = 0; i < ONUM; i++) o.push({ x: OX[i], z: OZ[i], r: OR[i] });
+  window.__ppObstacles = o;
+  window.__ppGates = { gates: GATES.map(g => g * STEP), finish: FINISH_I * STEP, len: COURSE_LEN };
+})();
+
+/* ═════════════════ camera ═════════════════ */
+const camPos = new THREE.Vector3(0, 30, -40);
+const camLook = new THREE.Vector3(0, 0, 0);
+const camDir = { x: 0, z: 1 };
+let camFov = 63;
+function snapCameraBehind() {
+  const dx = Math.sin(P.heading), dz = Math.cos(P.heading);
+  camDir.x = dx; camDir.z = dz;
+  camPos.set(P.x - dx * 9.2, P.y + 3.7, P.z - dz * 9.2);
+  camLook.set(P.x + dx * 7.5, P.y + 1.1, P.z + dz * 7.5);
+}
+function updateCamera(dt, now) {
+  if (state === S_TITLE) {
+    const t = now * 0.00006;
+    const ci = 60;
+    const cx = CX[ci], cz = CZ[ci], cy2 = CY[ci];
+    camPos.set(cx + Math.cos(t) * 52, cy2 + 22 + Math.sin(t * 1.7) * 5, cz + Math.sin(t) * 52);
+    camLook.set(CX[ci + 40], CY[ci + 40] + 4, CZ[ci + 40]);
+  } else if (state === S_FINISH) {
+    const t = now * 0.00018;
+    camPos.x += (P.x + Math.cos(t) * 13 - camPos.x) * Math.min(1, dt * 2);
+    camPos.y += (P.y + 5.5 - camPos.y) * Math.min(1, dt * 2);
+    camPos.z += (P.z + Math.sin(t) * 13 - camPos.z) * Math.min(1, dt * 2);
+    camLook.x += (P.x - camLook.x) * Math.min(1, dt * 3);
+    camLook.y += (P.y + 1 - camLook.y) * Math.min(1, dt * 3);
+    camLook.z += (P.z - camLook.z) * Math.min(1, dt * 3);
+  } else {
+    // chase cam: smoothed forward dir, pulls back a touch in the air
+    const dx = Math.sin(P.heading), dz = Math.cos(P.heading);
+    const kd = Math.min(1, dt * 3.2);
+    camDir.x += (dx - camDir.x) * kd;
+    camDir.z += (dz - camDir.z) * kd;
+    const dl = Math.hypot(camDir.x, camDir.z) || 1;
+    camDir.x /= dl; camDir.z /= dl;
+    const dist = 9.2 + (P.air ? 1.5 : 0) + P.v * 0.045;
+    const kp = Math.min(1, dt * 6.5);
+    camPos.x += (P.x - camDir.x * dist - camPos.x) * kp;
+    camPos.y += (P.y + 3.7 - camPos.y) * kp;
+    camPos.z += (P.z - camDir.z * dist - camPos.z) * kp;
+    const kl = Math.min(1, dt * 8);
+    camLook.x += (P.x + camDir.x * 7.5 - camLook.x) * kl;
+    camLook.y += (P.y + 1.1 - camLook.y) * kl;
+    camLook.z += (P.z + camDir.z * 7.5 - camLook.z) * kl;
+    // never sink the camera into the snow
+    const ch = terrainH(camPos.x, camPos.z);
+    if (camPos.y < ch + 1.6) camPos.y = ch + 1.6;
+    const wantFov = 63 + clamp(P.v, 0, 34) * 0.33;
+    if (Math.abs(wantFov - camFov) > 0.3) {
+      camFov = wantFov;
+      camera.fov = camFov;
+      camera.updateProjectionMatrix();
+    }
+  }
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+  skyGroup.position.copy(camPos);
+}
+
+/* ═════════════════ skier pose + per-frame visuals ═════════════════ */
+skier.rotation.order = 'YXZ';
+let poseCrouch = 0.3, poseWedge = 0, poseAir = 0, smPitch = 0, smRoll = 0;
+let crashSpin = 0;
+function updateSkier(dt) {
+  skier.position.set(P.x, P.y, P.z);
+  if (P.crashT > 0) {
+    crashSpin += dt;
+    skier.rotation.y = P.heading;
+    skier.rotation.x = crashSpin * 8.5;
+    skier.rotation.z = crashSpin * 4.2;
+    skier.position.y = P.y + Math.abs(Math.sin(crashSpin * 7)) * 0.5 * Math.max(0, P.crashT / 1.2);
+    return;
+  }
+  crashSpin = 0;
+  const tuckT = (state === S_RUN && inp.tuck && !P.air) ? 1 : 0;
+  const brakeT = (state === S_RUN && (inp.brake || state === S_FINISH) && !P.air) ? 1 : 0;
+  const airT = P.air ? 1 : 0;
+  const ks = Math.min(1, dt * 8);
+  poseCrouch += ((tuckT ? 1 : brakeT ? 0.15 : 0.3) - poseCrouch) * ks;
+  poseWedge += (brakeT - poseWedge) * ks;
+  poseAir += (airT - poseAir) * ks;
+
+  const targetPitch = P.air ? clamp(-P.vy * 0.05, -0.45, 0.35) : -Math.atan(P.grade);
+  smPitch += (targetPitch - smPitch) * Math.min(1, dt * 6);
+  const targetRoll = -inp.steer * 0.40 * Math.min(1, P.v / 16) + clamp(P.latSlope, -0.8, 0.8) * 0.35;
+  smRoll += (targetRoll - smRoll) * Math.min(1, dt * 7);
+  skier.rotation.y = P.heading;
+  skier.rotation.x = smPitch;
+  skier.rotation.z = smRoll;
+
+  const hipY = 0.95 - 0.34 * poseCrouch;
+  legL.position.y = hipY; legR.position.y = hipY;
+  const legScale = Math.max(0.4, (hipY - 0.30) / 0.6);
+  legL.scale.y = legScale; legR.scale.y = legScale;
+  torso.position.y = hipY - 0.02;
+  torso.rotation.x = 0.35 + 0.85 * poseCrouch - 0.30 * poseAir;
+  const spread = 0.25 + poseWedge * 0.75 + poseAir * 0.95;
+  armL.rotation.z = -spread; armR.rotation.z = spread;
+  armL.rotation.x = -0.3 - poseCrouch * 0.95 + poseAir * 0.5;
+  armR.rotation.x = armL.rotation.x;
+  const wedgeA = poseWedge * 0.36;
+  skiL.rotation.y = wedgeA; skiR.rotation.y = -wedgeA;
+  skiL.rotation.x = -0.12 * poseAir; skiR.rotation.x = -0.12 * poseAir;
+  skiL.position.x = -(0.21 + 0.15 * poseWedge); skiR.position.x = 0.21 + 0.15 * poseWedge;
+
+  blobShadow.position.set(P.x, (P.air ? P.y - (P.y - terrainHShadow()) : P.y) + 0.06, P.z);
+  const airH = P.air ? clamp(P.y - blobShadow.position.y + 0.06, 0, 8) : 0;
+  blobShadow.material.opacity = 0.28 * (1 - airH / 9);
+  const shScale = 1 + airH * 0.1;
+  blobShadow.scale.set(shScale, shScale, 1);
+}
+function terrainHShadow() { return P.air ? terrainH(P.x, P.z) : P.y; }
+
+function updateVisuals(dt, now) {
+  updateCamera(dt, now);
+  updateSkier(dt);
+  // tile culling by camera distance (fog hides the pop)
+  const cxp = camera.position.x, czp = camera.position.z;
+  for (let i = 0; i < tiles.length; i++) {
+    const t = tiles[i];
+    const ddx = t.cx - cxp, ddz = t.cz - czp;
+    t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400; // 520^2
+  }
+  sprayAttr.needsUpdate = true;
+  if (snowfall) {
+    snowfall.position.set(camera.position.x - 45, camera.position.y - 20, camera.position.z - 45);
+    snowfall.geometry.getAttribute('position').needsUpdate = true;
+  }
+  // audio follows the sim
+  if (ac) {
+    const duck = (state === S_PAUSE || state === S_TITLE) ? 0.25 : 1;
+    windGain.gain.value = Math.min(0.20, P.v * 0.006) * duck;
+    windFilt.frequency.value = 260 + P.v * 26;
+    carveGain.gain.value = (!P.air && state === S_RUN)
+      ? Math.min(0.22, (Math.abs(inp.steer) * P.v * 0.006 + (inp.brake ? P.v * 0.005 : 0))) : 0;
+  }
+  // respawn white flash decay
+  if (respawnFadeT > 0) {
+    respawnFadeT -= dt;
+    if (respawnFadeT <= 0) fadeWhite.style.opacity = '0';
+  }
+}
+
+/* ═════════════════ HUD per-frame (only touch DOM on change) ═════════════════ */
+let lastTimeStr = '', lastKmh = -1, lastMarkI = -1, lastGradeStr = '', gradeCounter = 0;
+function updateHUD() {
+  const t = state === S_FINISH ? finalTime : runTime;
+  const str = fmtTime(t);
+  if (str !== lastTimeStr) { lastTimeStr = str; timeText.textContent = str; }
+  const kmh = Math.round(P.v * 3.6);
+  if (kmh !== lastKmh) {
+    lastKmh = kmh;
+    speedNum.textContent = String(kmh);
+    const deg = -128 + clamp(kmh, 0, 140) / 140 * 256;
+    needle.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
+  }
+  if (P.curI !== lastMarkI) {
+    lastMarkI = P.curI;
+    profMarker.style.transform = 'translate(' + profPX[P.curI].toFixed(1) + 'px,' + profPY[P.curI].toFixed(1) + 'px)';
+  }
+  if (++gradeCounter >= 30) {
+    gradeCounter = 0;
+    const gs = Math.round(Math.abs(P.grade) * 100) + '%';
+    if (gs !== lastGradeStr) { lastGradeStr = gs; gradePct.textContent = gs; }
+  }
+}
+
+/* ═════════════════ menus / state edges (per frame) ═════════════════ */
+function updatePauseSel() {
+  el('mi0').className = 'mitem' + (pauseSel === 0 ? ' sel' : '');
+  el('mi1').className = 'mitem' + (pauseSel === 1 ? ' sel' : '');
+}
+function menuLogic(dt) {
+  if (state === S_TITLE) {
+    if (edges.confirm || edges.any) { sfx.jingle(); startRun(); snapCameraBehind(); }
+  } else if (state === S_PAUSE) {
+    if (edges.up || edges.down) { pauseSel = 1 - pauseSel; updatePauseSel(); sfx.menuMove(); }
+    if (edges.pause) { state = pausedFrom; setBodyState(state); }
+    else if (edges.confirm) {
+      if (pauseSel === 0) { state = pausedFrom; setBodyState(state); }
+      else { startRun(); snapCameraBehind(); }
+    }
+  } else if (state === S_RUN || state === S_COUNT) {
+    if (edges.pause) {
+      pausedFrom = state;
+      state = S_PAUSE;
+      pauseSel = 0; updatePauseSel();
+      setBodyState(S_PAUSE);
+    }
+  } else if (state === S_FINISH) {
+    if (finishShowT > 0) finishShowT -= dt;
+    else if (edges.confirm) { startRun(); snapCameraBehind(); }
+    else if (edges.back) gotoTitle();
+  }
+  syncTelemetry(); // state changes surface immediately, even while frozen
+}
+
+/* ═════════════════ perf telemetry ═════════════════ */
+function perfTelemetry() {
+  const ri = renderer.info.render;
+  TL.perf.calls = ri.calls; TL.perf.tris = ri.triangles;
+  if (ri.calls > TL.perf.maxCalls) TL.perf.maxCalls = ri.calls;
+  if (ri.triangles > TL.perf.maxTris) TL.perf.maxTris = ri.triangles;
+  if (state === S_RUN) {
+    const s2 = clamp(lastGateIdx, 0, 3);
+    if (ri.calls > TL.perf.sectorCalls[s2]) TL.perf.sectorCalls[s2] = ri.calls;
+    if (ri.triangles > TL.perf.sectorTris[s2]) TL.perf.sectorTris[s2] = ri.triangles;
+  }
+}
+
+/* ═════════════════ stage letterboxing ═════════════════ */
+const stage = document.getElementById('stage');
+function fitStage() {
+  const s2 = Math.min(window.innerWidth / VW, window.innerHeight / VH);
+  stage.style.transform = 'translate(-50%,-50%) scale(' + s2 + ')';
+}
+window.addEventListener('resize', fitStage);
+fitStage();
+
+/* ═════════════════ main loop — fixed 60 Hz sim, rAF render ═════════════════ */
+let lastNow = performance.now(), accMs = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dtReal = Math.min(0.1, (now - lastNow) / 1000);
+  lastNow = now;
+  gatherInput();
+  menuLogic(dtReal);
+  let n = 0;
+  if (state !== S_TITLE && state !== S_PAUSE) {
+    if (TURBO > 0) {
+      // test mode only: the harness may retune tick rate mid-session
+      n = (typeof window.__ppTurbo === 'number') ? clamp(window.__ppTurbo, 1, 30) : TURBO;
+    } else {
+      accMs += dtReal * 1000;
+      n = Math.floor(accMs / 16.6667);
+      if (n > 5) { n = 5; accMs = 0; } else accMs -= n * 16.6667;
+    }
+  }
+  for (let k = 0; k < n; k++) tickSim();
+  clearEdges();
+  // camera/pose smoothing runs on covered sim time so fast-forward (turbo)
+  // and dropped frames don't stretch the chase-cam lag
+  const dtVis = Math.max(dtReal, n * DT);
+  updateVisuals(dtVis, now);
+  renderer.render(scene, camera);
+  perfTelemetry();
+  updateHUD();
+}
+
+/* boot */
+placeAtSample(2);
+bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
+gotoTitle();
+syncTelemetry();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

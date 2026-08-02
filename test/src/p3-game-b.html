@@ -1,0 +1,638 @@
+
+/* ═════════════════════ renderer / scene ═════════════════════ */
+const canvas = document.getElementById('gl');
+const renderer = new THREE.WebGLRenderer({
+  canvas, antialias: false, powerPreference: 'high-performance',
+  stencil: false,
+});
+renderer.setPixelRatio(1);
+renderer.setSize(VW, VH, false);
+
+const FOG_COL = 0xf2b1a6;
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(FOG_COL, 80, 380);
+scene.background = new THREE.Color(FOG_COL);
+
+const camera = new THREE.PerspectiveCamera(63, VW / VH, 0.3, 1500);
+
+// Lights only affect the skier (Lambert). All static world geometry has
+// its sunset lighting BAKED into vertex colors — zero per-fragment cost.
+const sunLight = new THREE.DirectionalLight(0xffd9b0, 1.0);
+sunLight.position.set(-60, 45, -66);
+scene.add(sunLight);
+scene.add(new THREE.HemisphereLight(0xb8c4ff, 0xfff0e8, 0.65));
+
+/* ─────────────── merged-geometry builders (baked lighting) ─────────────── */
+const SUNX = -0.601, SUNY = 0.451, SUNZ = -0.661;  // normalized sun dir
+function shadeInto(nx, ny, nz, r, g, b, out, o) {
+  let d = nx * SUNX + ny * SUNY + nz * SUNZ;
+  if (d < 0) d = 0;
+  const l = 0.52 + 0.58 * d;
+  // cool violet shadows → warm peach light: the alpenglow bake
+  out[o] = Math.min(1, r * l * (0.80 + 0.33 * d));
+  out[o + 1] = Math.min(1, g * l * (0.86 + 0.14 * d));
+  out[o + 2] = Math.min(1, b * l * (1.14 - 0.26 * d));
+}
+function newMD() { return { p: [], c: [] }; }
+// hint: outward direction — winding is flipped if the normal disagrees,
+// so callers never have to think about triangle order.
+function pushTri(md, ax, ay, az, bx, by, bz, cx, cy, cz, r, g, b, hx, hy, hz) {
+  let ux = bx - ax, uy = by - ay, uz = bz - az;
+  let vx = cx - ax, vy = cy - ay, vz = cz - az;
+  let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+  nx /= len; ny /= len; nz /= len;
+  if (hx !== undefined && nx * hx + ny * hy + nz * hz < 0) {
+    const tx = bx, ty = by, tz = bz;
+    bx = cx; by = cy; bz = cz; cx = tx; cy = ty; cz = tz;
+    nx = -nx; ny = -ny; nz = -nz;
+  }
+  md.p.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+  const col = [0, 0, 0];
+  shadeInto(nx, ny, nz, r, g, b, col, 0);
+  md.c.push(col[0], col[1], col[2], col[0], col[1], col[2], col[0], col[1], col[2]);
+}
+function pushQuad(md, p1, p2, p3, p4, r, g, b, hx, hy, hz) {
+  pushTri(md, p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2], r, g, b, hx, hy, hz);
+  pushTri(md, p1[0], p1[1], p1[2], p3[0], p3[1], p3[2], p4[0], p4[1], p4[2], r, g, b, hx, hy, hz);
+}
+function pushBox(md, cx, cy, cz, sx, sy, sz, yaw, r, g, b) {
+  const co = Math.cos(yaw), si = Math.sin(yaw);
+  const hx = sx / 2, hy = sy / 2, hz = sz / 2;
+  const P = [];
+  for (let i = 0; i < 8; i++) {
+    const lx = (i & 1 ? hx : -hx), ly = (i & 2 ? hy : -hy), lz = (i & 4 ? hz : -hz);
+    P.push([cx + lx * co + lz * si, cy + ly, cz - lx * si + lz * co]);
+  }
+  const face = (a, b2, c, d, ox, oy, oz) => {
+    const wx = ox * co + oz * si, wz = -ox * si + oz * co;
+    pushQuad(md, P[a], P[b2], P[c], P[d], r, g, b, wx, oy, wz);
+  };
+  face(1, 3, 7, 5, 1, 0, 0); face(0, 2, 6, 4, -1, 0, 0);
+  face(2, 3, 7, 6, 0, 1, 0); face(0, 1, 5, 4, 0, -1, 0);
+  face(4, 5, 7, 6, 0, 0, 1); face(0, 1, 3, 2, 0, 0, -1);
+}
+function pushCone(md, cx, cy, cz, rad, h, seg, r, g, b, jitterFn) {
+  for (let i = 0; i < seg; i++) {
+    const a0 = i / seg * Math.PI * 2, a1 = (i + 1) / seg * Math.PI * 2;
+    const j0 = jitterFn ? jitterFn(i) : 1, j1 = jitterFn ? jitterFn(i + 1) : 1;
+    const x0 = cx + Math.cos(a0) * rad * j0, z0 = cz + Math.sin(a0) * rad * j0;
+    const x1 = cx + Math.cos(a1) * rad * j1, z1 = cz + Math.sin(a1) * rad * j1;
+    const mx = (x0 + x1) / 2 - cx, mz = (z0 + z1) / 2 - cz;
+    pushTri(md, cx, cy + h, cz, x0, cy, z0, x1, cy, z1, r, g, b, mx, h * 0.15, mz);
+  }
+}
+const worldMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+function md2mesh(md, mat) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(md.p), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(md.c), 3));
+  geo.computeBoundingSphere();
+  return new THREE.Mesh(geo, mat || worldMat);
+}
+
+/* ═════════════════ terrain tiles + everything merged in ═════════════════ */
+const TILE = 176, TRES = 3.2;
+const TGX0 = Math.floor(HX0 / TILE), TGZ0 = Math.floor(HZ0 / TILE);
+const TGW = Math.ceil((HX1 - HX0) / TILE) + 1, TGH = Math.ceil((HZ1 - HZ0) / TILE) + 1;
+const tileMDs = new Array(TGW * TGH).fill(null);
+const tileHasCourse = new Uint8Array(TGW * TGH);
+for (let i = 0; i < NS; i++) {
+  // a sample influences terrain out to R_LAT — mark tiles in that halo
+  const tx0 = Math.floor((CX[i] - R_LAT) / TILE) - TGX0, tx1 = Math.floor((CX[i] + R_LAT) / TILE) - TGX0;
+  const tz0 = Math.floor((CZ[i] - R_LAT) / TILE) - TGZ0, tz1 = Math.floor((CZ[i] + R_LAT) / TILE) - TGZ0;
+  for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
+    if (tx >= 0 && tz >= 0 && tx < TGW && tz < TGH) tileHasCourse[tz * TGW + tx] = 1;
+  }
+}
+function tileMD(tx, tz) {
+  const c = tz * TGW + tx;
+  if (!tileMDs[c]) tileMDs[c] = newMD();
+  return tileMDs[c];
+}
+function tileMDAt(x, z) {
+  const tx = clamp(Math.floor(x / TILE) - TGX0, 0, TGW - 1);
+  const tz = clamp(Math.floor(z / TILE) - TGZ0, 0, TGH - 1);
+  return tileMD(tx, tz);
+}
+
+// face palette for the mountain
+function terrainColor(domI, u, ny, fx, fz, out) {
+  const w = CW[domI], au = u < 0 ? -u : u;
+  const jit = hash2(Math.floor(fx * 2.1), Math.floor(fz * 2.1)) * 0.014;
+  if (ny < 0.62) { // steep = bare rock, dusted with snow as it flattens
+    const n = noise2(fx * 0.13, fz * 0.13) * 0.05;
+    const dust = clamp((ny - 0.45) * 2.2, 0, 0.55);
+    out[0] = lerp(0.36 + n, 0.88, dust) + jit;
+    out[1] = lerp(0.35 + n, 0.90, dust) + jit;
+    out[2] = lerp(0.42 + n, 0.99, dust) + jit;
+    return;
+  }
+  if (au <= w) { // groomed piste — bright, faint corduroy stripes
+    const cord = 0.03 * Math.sin(u * 2.5);
+    let r = 0.955 + cord + jit, g = 0.968 + cord + jit, b = 1.0;
+    if (CRAMP[domI] > 0.15 && au < 5.4) { r = 0.855; g = 0.935; b = 1.0; } // sculpted kicker
+    if (au > w - 0.7) { r -= 0.13; g -= 0.08; }                            // groom edge
+    out[0] = r; out[1] = g; out[2] = b;
+    return;
+  }
+  // off-piste powder: bluer, softer, wind-shaped patches
+  const k = clamp(noise2(fx * 0.045, fz * 0.045), 0, 1) * 0.55;
+  out[0] = lerp(0.865, 0.735, k) + jit;
+  out[1] = lerp(0.905, 0.815, k) + jit;
+  out[2] = 1.0;
+}
+
+(function buildTerrain() {
+  const NV = Math.round(TILE / TRES) + 1;
+  const hs = new Float32Array(NV * NV), us = new Float32Array(NV * NV);
+  const ds = new Float32Array(NV * NV); const dom = new Int32Array(NV * NV);
+  const col = [0, 0, 0];
+  for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
+    if (!tileHasCourse[tz * TGW + tx]) continue;
+    const ox = (TGX0 + tx) * TILE, oz = (TGZ0 + tz) * TILE;
+    for (let vz = 0; vz < NV; vz++) for (let vx = 0; vx < NV; vx++) {
+      const ti = terrainInfo(ox + vx * TRES, oz + vz * TRES);
+      const n = vz * NV + vx;
+      hs[n] = ti.h; us[n] = ti.u; ds[n] = ti.d; dom[n] = ti.i;
+    }
+    const md = tileMD(tx, tz);
+    for (let vz = 0; vz < NV - 1; vz++) for (let vx = 0; vx < NV - 1; vx++) {
+      const n00 = vz * NV + vx, n10 = n00 + 1, n01 = n00 + NV, n11 = n01 + 1;
+      if (ds[n00] > 70 || ds[n10] > 70 || ds[n01] > 70 || ds[n11] > 70) continue;
+      const x0 = ox + vx * TRES, x1 = x0 + TRES;
+      const z0 = oz + vz * TRES, z1 = z0 + TRES;
+      // pick the vertex closest to the course as the color authority
+      let bn = n00;
+      if (ds[n10] < ds[bn]) bn = n10;
+      if (ds[n01] < ds[bn]) bn = n01;
+      if (ds[n11] < ds[bn]) bn = n11;
+      // tri A: (00,10,11)  tri B: (00,11,01)
+      for (let t = 0; t < 2; t++) {
+        const ax = x0, ay = hs[n00], az = z0;
+        const bx2 = t === 0 ? x1 : x1, by = t === 0 ? hs[n10] : hs[n11], bz = t === 0 ? z0 : z1;
+        const cx2 = t === 0 ? x1 : x0, cy2 = t === 0 ? hs[n11] : hs[n01], cz2 = t === 0 ? z1 : z1;
+        // face normal for color choice (rock vs snow)
+        let ux = bx2 - ax, uy = by - ay, uz = bz - az;
+        let vx2 = cx2 - ax, vy2 = cy2 - ay, vz2 = cz2 - az;
+        let ny = uz * vx2 - ux * vz2; // y of cross
+        const nx = uy * vz2 - uz * vy2, nz = ux * vy2 - uy * vx2;
+        const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        let nyn = Math.abs(ny / nl);
+        terrainColor(dom[bn], us[bn], nyn, (ax + bx2 + cx2) / 3, (az + bz + cz2) / 3, col);
+        pushTri(md, ax, ay, az, bx2, by, bz, cx2, cy2, cz2, col[0], col[1], col[2], 0, 1, 0);
+      }
+    }
+  }
+})();
+
+/* ═════════════════ trees, rocks, stakes, fences, signs ═════════════════ */
+// collidable obstacle list → CSR hash (queried per tick, zero alloc)
+const obsX = [], obsZ = [], obsR = [];
+function addObstacle(x, z, r) { obsX.push(x); obsZ.push(z); obsR.push(r); }
+
+function pushTree(md, x, z, gy, sc, tintR) {
+  const g1 = lerp(0.10, 0.16, tintR), g2 = lerp(0.29, 0.37, tintR), g3 = lerp(0.26, 0.30, tintR);
+  pushBox(md, x, gy + 0.55 * sc, z, 0.34 * sc, 1.3 * sc, 0.34 * sc, tintR * 3, 0.30, 0.22, 0.17);
+  pushCone(md, x, gy + 0.85 * sc, z, 1.60 * sc, 2.35 * sc, 6, g1, g2, g3);
+  pushCone(md, x, gy + 2.15 * sc, z, 1.18 * sc, 2.05 * sc, 6, g1 * 1.15, g2 * 1.1, g3 * 1.1);
+  pushCone(md, x, gy + 3.35 * sc, z, 0.74 * sc, 1.75 * sc, 6, g1 * 1.3, g2 * 1.18, g3 * 1.15);
+  pushCone(md, x, gy + 4.45 * sc, z, 0.44 * sc, 0.95 * sc, 6, 0.93, 0.95, 1.0); // snow cap
+}
+const rockTmpl = (function () {
+  const g = new THREE.IcosahedronGeometry(1, 0);
+  return g.getAttribute('position').array.slice();
+})();
+function pushRock(md, x, z, gy, sc, seed) {
+  const rr = mulberry32(seed);
+  const sy = sc * lerp(0.55, 0.85, rr()), yaw = rr() * Math.PI * 2;
+  const co = Math.cos(yaw), si = Math.sin(yaw);
+  const jit = [];
+  for (let v = 0; v < 12; v++) jit.push(lerp(0.8, 1.25, rr()));
+  for (let f = 0; f < rockTmpl.length; f += 9) {
+    const P = [];
+    for (let v = 0; v < 3; v++) {
+      let px = rockTmpl[f + v * 3], py = rockTmpl[f + v * 3 + 1], pz = rockTmpl[f + v * 3 + 2];
+      const jj = jit[(f / 9 + v) % 12];
+      px *= sc * jj; py *= sy * jj; pz *= sc * jj;
+      P.push([x + px * co + pz * si, gy + py + sy * 0.55, z - px * si + pz * co]);
+    }
+    // upward faces get a snow cap
+    const upy = (P[0][1] + P[1][1] + P[2][1]) / 3 - (gy + sy * 0.55);
+    const snowy = upy > sy * 0.30;
+    const cr = snowy ? 0.92 : 0.41, cg = snowy ? 0.94 : 0.395, cb = snowy ? 1.0 : 0.45;
+    const mx = (P[0][0] + P[1][0] + P[2][0]) / 3 - x, mz = (P[0][2] + P[1][2] + P[2][2]) / 3 - z;
+    pushTri(md, P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
+      cr, cg, cb, mx, upy, mz);
+  }
+}
+
+(function plantForest() {
+  const rr = mulberry32(SEED ^ 0x5eed);
+  // slalom gate trees — the technical sections' teeth, near the piste edge
+  let sinceGate = 0, side = 1;
+  for (let i = 4; i < NS - 8; i++) {
+    const st = CSTYLE[i];
+    sinceGate += STEP;
+    if (st === ST_SLALOM && sinceGate > 24) {
+      sinceGate = 0; side = -side;
+      const u = side * (CW[i] - 2.2);
+      const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+      const gy = terrainH(x, z);
+      pushTree(tileMDAt(x, z), x, z, gy - 0.15, lerp(0.95, 1.15, rr()), rr());
+      addObstacle(x, z, 0.85);
+    }
+    // forest bands beside the course
+    if (i % 2 === 0) {
+      for (let sgn = -1; sgn <= 1; sgn += 2) {
+        const wall = sgn < 0 ? CWL[i] : CWR[i];
+        if (wall < 0) continue;             // no trees hanging over the cliff
+        const dens = st === ST_SLALOM ? 0.30 : st === ST_OPEN ? 0.52 : 0.44;
+        for (let k = 0; k < 4; k++) {
+          const u = sgn * (CW[i] + 5 + k * 13 + rr() * 9);
+          const x = CX[i] + CRX[i] * u + (rr() - 0.5) * 4;
+          const z = CZ[i] + CRZ[i] * u + (rr() - 0.5) * 4;
+          const n = noise2(x * 0.03, z * 0.03) * 0.5 + 0.5;
+          if (n + rr() * 0.35 < dens + k * 0.06) continue;
+          const gy = terrainH(x, z);
+          if (gy > CY[i] + 26) continue;     // not up on the crags
+          // no trees clinging to rock faces
+          const sx2 = (terrainH(x + 2.2, z) - terrainH(x - 2.2, z)) / 4.4;
+          const sz2 = (terrainH(x, z + 2.2) - terrainH(x, z - 2.2)) / 4.4;
+          if (sx2 * sx2 + sz2 * sz2 > 0.42) continue;
+          const sc = lerp(0.8, 1.35, rr());
+          pushTree(tileMDAt(x, z), x, z, gy - 0.15, sc, rr());
+          if (Math.abs(u) < CW[i] + 8) addObstacle(x, z, 0.85 * sc);
+        }
+      }
+    }
+    // scattered boulders
+    if (i % 13 === 0 && st !== ST_RIDGE) {
+      const sgn = rr() < 0.5 ? -1 : 1;
+      if ((sgn < 0 ? CWL[i] : CWR[i]) >= 0) {
+        const u = sgn * (CW[i] + 2.5 + rr() * 13);
+        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+        const gy = terrainH(x, z);
+        // boulders only rest on gentle ground — no hovering off steep banks
+        const rsx = (terrainH(x + 2, z) - terrainH(x - 2, z)) / 4;
+        const rsz = (terrainH(x, z + 2) - terrainH(x, z - 2)) / 4;
+        if (rsx * rsx + rsz * rsz < 0.2) {
+          const sc = lerp(0.7, 1.9, rr());
+          pushRock(tileMDAt(x, z), x, z, gy - 0.45 * sc, sc, (SEED ^ i * 7919) >>> 0);
+          if (Math.abs(u) < CW[i] + 7) addObstacle(x, z, sc * 0.9);
+        }
+      }
+    }
+    // piste edge stakes (skip in the tree slaloms — trees mark the line)
+    if (i % 5 === 0 && st !== ST_SLALOM) {
+      for (let sgn = -1; sgn <= 1; sgn += 2) {
+        const u = sgn * (CW[i] + 0.7);
+        const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+        const gy = terrainH(x, z);
+        pushBox(tileMDAt(x, z), x, gy + 0.42, z, 0.13, 0.9, 0.13, 0, 1.0, 0.42, 0.16);
+      }
+    }
+  }
+  // canyon-rim fences along ridge sections (cliff side)
+  let prevPost = null;
+  for (let i = 2; i < NS - 2; i += 2) {
+    if (CSTYLE[i] !== ST_RIDGE) { prevPost = null; continue; }
+    const sgn = CWL[i] < 0 ? -1 : (CWR[i] < 0 ? 1 : 0);
+    if (!sgn) { prevPost = null; continue; }
+    const u = sgn * (CW[i] + 1.8);
+    const x = CX[i] + CRX[i] * u, z = CZ[i] + CRZ[i] * u;
+    const gy = terrainH(x, z);
+    const md = tileMDAt(x, z);
+    pushBox(md, x, gy + 0.55, z, 0.18, 1.15, 0.18, 0, 0.34, 0.26, 0.19);
+    if (prevPost) {
+      const mx = (x + prevPost[0]) / 2, mz = (z + prevPost[2]) / 2;
+      const ddx = x - prevPost[0], ddz = z - prevPost[2];
+      const len = Math.sqrt(ddx * ddx + ddz * ddz);
+      const yaw = Math.atan2(ddx, ddz);
+      for (let rail = 0; rail < 2; rail++) {
+        const ry = lerp(gy + 0.45, gy + 0.95, rail) + (prevPost[1] - gy) / 2;
+        pushBox(md, mx, ry, mz, 0.09, 0.12, len, yaw, 0.46, 0.36, 0.26);
+      }
+    }
+    prevPost = [x, gy + 0.55, z];
+  }
+})();
+
+/* chevron warning signs at every hairpin entry */
+function panelBar(md, o, ax, ay, az, bx, by, bz, x1, y1, x2, y2, hw, r, g, b, nx, ny, nz) {
+  // a bar in panel space (axes a=across, b=up), both faces emitted
+  const dx = x2 - x1, dy = y2 - y1; const dl = Math.hypot(dx, dy) || 1;
+  const px = -dy / dl * hw, py = dx / dl * hw;
+  const P = (u, v) => [o[0] + ax * u + bx * v, o[1] + ay * u + by * v, o[2] + az * u + bz * v];
+  const q1 = P(x1 + px, y1 + py), q2 = P(x2 + px, y2 + py), q3 = P(x2 - px, y2 - py), q4 = P(x1 - px, y1 - py);
+  pushQuad(md, q1, q2, q3, q4, r, g, b, nx, ny, nz);
+  pushQuad(md, q1, q4, q3, q2, r, g, b, -nx, -ny, -nz);
+}
+(function placeChevrons() {
+  let i = 0;
+  while (i < NS) {
+    if (CSTYLE[i] !== ST_HAIRPIN) { i++; continue; }
+    let j = i; let curvSum = 0;
+    while (j < NS && CSTYLE[j] === ST_HAIRPIN) { curvSum += CCURV[j]; j++; }
+    const turnRight = curvSum > 0;
+    const outer = turnRight ? -1 : 1;           // outer side of the turn
+    for (const off of [-6, Math.floor((j - i) * 0.35)]) {
+      const k = clamp(i + off, 2, NS - 3);
+      const u = outer * (CW[k] + 3.2);
+      const x = CX[k] + CRX[k] * u, z = CZ[k] + CRZ[k] * u;
+      const gy = terrainH(x, z);
+      const md = tileMDAt(x, z);
+      // posts + big orange panel facing oncoming skiers
+      const ax = CRX[k], az = CRZ[k];           // across = course right vector
+      const nx = -CDX[k], nz = -CDZ[k];         // face back up the course
+      pushBox(md, x - ax * 1.35, gy + 1.0, z - az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+      pushBox(md, x + ax * 1.35, gy + 1.0, z + az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+      const o = [x, gy + 2.0, z];
+      // navy frame then orange face
+      panelBar(md, o, ax, 0, az, 0, 1, 0, -1.62, 0, 1.62, 0, 0.72, 0.125, 0.135, 0.24, nx, 0, nz);
+      const o2 = [x + nx * 0.05, gy + 2.0, z + nz * 0.05];
+      panelBar(md, o2, ax, 0, az, 0, 1, 0, -1.5, 0, 1.5, 0, 0.6, 0.96, 0.30, 0.10, nx, 0, nz);
+      // three white chevrons pointing INTO the turn. The approaching skier
+      // views the panel face-on, which MIRRORS the course-right axis, so the
+      // sign is flipped relative to intuition.
+      const dir = turnRight ? -1 : 1;
+      for (let cvi = 0; cvi < 3; cvi++) {
+        const cx0 = (cvi - 1) * 0.88 * dir;
+        const o3 = [x + nx * 0.10, gy + 2.0, z + nz * 0.10];
+        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 - 0.22 * dir, 0.36, cx0 + 0.22 * dir, 0.02, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 + 0.22 * dir, 0.02, cx0 - 0.22 * dir, -0.34, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+      }
+    }
+    i = j;
+  }
+})();
+
+/* checkpoint gates, start arch, finish arch */
+function pushGate(gi, big, checker) {
+  const w = CW[gi] + 0.8;
+  const lx = CX[gi] - CRX[gi] * w, lz = CZ[gi] - CRZ[gi] * w;
+  const rx = CX[gi] + CRX[gi] * w, rz = CZ[gi] + CRZ[gi] * w;
+  const ly = terrainH(lx, lz), ry = terrainH(rx, rz);
+  const topY = Math.max(ly, ry) + (big ? 5.4 : 4.4);
+  const md = tileMDAt(CX[gi], CZ[gi]);
+  const yaw = Math.atan2(CDX[gi], CDZ[gi]);
+  for (const [px, pz, py] of [[lx, lz, ly], [rx, rz, ry]]) {
+    if (big) { // candy-stripe poles
+      const segs = 5, h = topY - py;
+      for (let s2 = 0; s2 < segs; s2++) {
+        const red = s2 % 2 === 0;
+        pushBox(md, px, py + h * (s2 + 0.5) / segs, pz, 0.34, h / segs, 0.34, yaw,
+          red ? 0.92 : 0.97, red ? 0.22 : 0.96, red ? 0.20 : 0.94);
+      }
+    } else {
+      pushBox(md, px, (py + topY) / 2, pz, 0.26, topY - py, 0.26, yaw, 0.14, 0.66, 0.84);
+    }
+  }
+  // banner bar
+  const span = w * 2 + 0.6;
+  const bx = (lx + rx) / 2, bz = (lz + rz) / 2;
+  pushBox(md, bx, topY + 0.55, bz, 0.3, 1.15, span, yaw + Math.PI / 2, 0.125, 0.135, 0.24);
+  pushBox(md, bx, topY - 0.02, bz, 0.32, 0.14, span, yaw + Math.PI / 2, 1.0, 0.83, 0.24);
+  if (checker) { // finish checker squares proud of the banner
+    const n = Math.floor(span / 1.1);
+    for (let s2 = 0; s2 < n; s2++) {
+      const t = (s2 + 0.5) / n - 0.5;
+      const sqx = bx + CRX[gi] * t * span, sqz = bz + CRZ[gi] * t * span;
+      const up = s2 % 2 === 0;
+      pushBox(md, sqx, topY + (up ? 0.80 : 0.32), sqz, 0.36, 0.44, 0.46, yaw + Math.PI / 2,
+        up ? 0.97 : 0.10, up ? 0.97 : 0.11, up ? 0.96 : 0.18);
+    }
+  } else { // little yellow pennants under checkpoint banners
+    for (let s2 = -1; s2 <= 1; s2++) {
+      const px2 = bx + CRX[gi] * s2 * span * 0.28, pz2 = bz + CRZ[gi] * s2 * span * 0.28;
+      pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
+        px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
+        px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, CDX[gi], 0, CDZ[gi]);
+      pushTri(md, px2 - CRX[gi] * 0.28, topY - 0.1, pz2 - CRZ[gi] * 0.28,
+        px2 + CRX[gi] * 0.28, topY - 0.1, pz2 + CRZ[gi] * 0.28,
+        px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, -CDX[gi], 0, -CDZ[gi]);
+    }
+  }
+}
+for (const gi of GATES) pushGate(gi, false, false);
+pushGate(3, false, false);            // start gate
+pushGate(FINISH_I, true, true);       // finish arch
+
+/* ── turn tile MDs into meshes (one merged mesh per tile) ── */
+const tiles = [];   // {mesh, cx, cz}
+for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
+  const md = tileMDs[tz * TGW + tx];
+  if (!md || md.p.length === 0) continue;
+  const mesh = md2mesh(md);
+  mesh.matrixAutoUpdate = false;
+  mesh.updateMatrix();
+  scene.add(mesh);
+  tiles.push({ mesh, cx: (TGX0 + tx + 0.5) * TILE, cz: (TGZ0 + tz + 0.5) * TILE });
+}
+tileMDs.length = 0; // free build arrays
+
+/* obstacle CSR hash for per-tick collision queries */
+const ONUM = obsX.length;
+const OX = new Float32Array(obsX), OZ = new Float32Array(obsZ), OR = new Float32Array(obsR);
+const OCELL = 12;
+const OW = Math.ceil((HX1 - HX0) / OCELL), OH = Math.ceil((HZ1 - HZ0) / OCELL);
+const obsStart = new Int32Array(OW * OH + 1);
+let obsItems;
+(function buildObsHash() {
+  const counts = new Int32Array(OW * OH);
+  const cellOf = i => {
+    const cx = clamp(Math.floor((OX[i] - HX0) / OCELL), 0, OW - 1);
+    const cz = clamp(Math.floor((OZ[i] - HZ0) / OCELL), 0, OH - 1);
+    return cz * OW + cx;
+  };
+  for (let i = 0; i < ONUM; i++) counts[cellOf(i)]++;
+  let acc = 0;
+  for (let c = 0; c < OW * OH; c++) { obsStart[c] = acc; acc += counts[c]; }
+  obsStart[OW * OH] = acc;
+  obsItems = new Int32Array(acc);
+  const cursor = obsStart.slice(0, OW * OH);
+  for (let i = 0; i < ONUM; i++) { const c = cellOf(i); obsItems[cursor[c]++] = i; }
+})();
+
+/* ═════════════════ sky, sun, clouds, distant peaks ═════════════════ */
+const skyGroup = new THREE.Group();
+scene.add(skyGroup);
+(function buildSky() {
+  const geo = new THREE.SphereGeometry(1100, 20, 12);
+  const pos = geo.getAttribute('position');
+  const cols = new Float32Array(pos.count * 3);
+  const stops = [ // t (0 horizon-ish → 1 zenith), r,g,b — alpenglow gradient
+    [-1.0, 0.98, 0.73, 0.60], [0.0, 1.00, 0.80, 0.62], [0.06, 0.98, 0.67, 0.63],
+    [0.20, 0.84, 0.64, 0.78], [0.5, 0.55, 0.62, 0.90], [1.0, 0.40, 0.51, 0.86],
+  ];
+  for (let i = 0; i < pos.count; i++) {
+    const t = pos.getY(i) / 1100;
+    let a = stops[0], b = stops[stops.length - 1];
+    for (let s2 = 0; s2 < stops.length - 1; s2++) {
+      if (t >= stops[s2][0] && t <= stops[s2 + 1][0]) { a = stops[s2]; b = stops[s2 + 1]; break; }
+    }
+    const k = smoothstep((t - a[0]) / (b[0] - a[0] || 1));
+    cols[i * 3] = lerp(a[1], b[1], k); cols[i * 3 + 1] = lerp(a[2], b[2], k); cols[i * 3 + 2] = lerp(a[3], b[3], k);
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false });
+  const dome = new THREE.Mesh(geo, mat);
+  dome.renderOrder = -10;
+  dome.frustumCulled = false;
+  skyGroup.add(dome);
+  // low sunset sun + soft halo
+  const sunDist = 980;
+  const sx = -0.66 * sunDist, sy = 0.15 * sunDist, sz = -0.70 * sunDist;
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(52, 20),
+    new THREE.MeshBasicMaterial({ color: 0xfff3cc, fog: false, depthWrite: false }));
+  disc.position.set(sx, sy, sz); disc.lookAt(0, 0, 0); disc.renderOrder = -9;
+  skyGroup.add(disc);
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(150, 20),
+    new THREE.MeshBasicMaterial({ color: 0xffc890, fog: false, depthWrite: false, transparent: true, opacity: 0.30 }));
+  halo.position.set(sx * 0.995, sy * 0.995, sz * 0.995); halo.lookAt(0, 0, 0); halo.renderOrder = -9;
+  skyGroup.add(halo);
+  // floating low-poly clouds
+  const cmd = newMD();
+  const rr = mulberry32(SEED ^ 0xc10d);
+  for (let c = 0; c < 12; c++) {
+    const ang = rr() * Math.PI * 2, dist = lerp(380, 850, rr());
+    const cx = Math.cos(ang) * dist, cz = Math.sin(ang) * dist;
+    const cy = lerp(130, 330, rr());
+    const blobs = 3 + Math.floor(rr() * 3);
+    for (let b = 0; b < blobs; b++) {
+      const bx = cx + (rr() - 0.5) * 55, by = cy + (rr() - 0.5) * 9, bz = cz + (rr() - 0.5) * 34;
+      const sxr = lerp(13, 30, rr()), syr = lerp(3.5, 6.5, rr()), szr = lerp(9, 20, rr());
+      for (let f = 0; f < rockTmpl.length; f += 9) {
+        const P = [];
+        for (let v = 0; v < 3; v++) {
+          P.push([bx + rockTmpl[f + v * 3] * sxr, by + rockTmpl[f + v * 3 + 1] * syr, bz + rockTmpl[f + v * 3 + 2] * szr]);
+        }
+        const my = (P[0][1] + P[1][1] + P[2][1]) / 3 - by;
+        pushTri(cmd, P[0][0], P[0][1], P[0][2], P[1][0], P[1][1], P[1][2], P[2][0], P[2][1], P[2][2],
+          0.99, 0.90, 0.92, (P[0][0] + P[1][0] + P[2][0]) / 3 - bx, my, (P[0][2] + P[1][2] + P[2][2]) / 3 - bz);
+      }
+    }
+  }
+  const clouds = md2mesh(cmd, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  clouds.renderOrder = -8;
+  clouds.frustumCulled = false;
+  skyGroup.add(clouds);
+})();
+
+// distant peak backdrop — world-fixed, pre-hazed toward the fog color
+(function buildPeaks() {
+  const md = newMD();
+  const rr = mulberry32(SEED ^ 0x9ea1);
+  const fogc = [0.949, 0.694, 0.651];
+  for (let k = 0; k < 14; k++) {
+    const ci = Math.floor((k / 14) * (NS - 1));
+    const side = k % 2 === 0 ? -1 : 1;
+    const dist = lerp(420, 700, rr());
+    const px = CX[ci] + CRX[ci] * side * dist + (rr() - 0.5) * 200;
+    const pz = CZ[ci] + CRZ[ci] * side * dist + (rr() - 0.5) * 200;
+    const baseY = CY[ci] - 40;
+    const rad = lerp(150, 280, rr()), h = lerp(170, 330, rr());
+    const haze = lerp(0.50, 0.72, (dist - 420) / 280);
+    const jitters = [];
+    for (let s2 = 0; s2 < 10; s2++) jitters.push(lerp(0.7, 1.3, rr()));
+    // snow massif: shade first, then hand-mix toward fog for aerial haze
+    const tmp = newMD();
+    pushCone(tmp, px, baseY, pz, rad, h, 7, 0.90, 0.90, 1.0, i2 => jitters[i2 % 10]);
+    for (let ci2 = 0; ci2 < tmp.c.length; ci2 += 3) {
+      tmp.c[ci2] = lerp(tmp.c[ci2], fogc[0], haze);
+      tmp.c[ci2 + 1] = lerp(tmp.c[ci2 + 1], fogc[1], haze);
+      tmp.c[ci2 + 2] = lerp(tmp.c[ci2 + 2], fogc[2], haze);
+    }
+    md.p.push(...tmp.p); md.c.push(...tmp.c);
+  }
+  const peaks = md2mesh(md, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
+  peaks.renderOrder = -7;
+  scene.add(peaks);
+})();
+
+/* ═════════════════ the skier ═════════════════ */
+const skier = new THREE.Group();
+scene.add(skier);
+const matJacket = new THREE.MeshLambertMaterial({ color: 0xff5964 });
+const matPants = new THREE.MeshLambertMaterial({ color: 0x232744 });
+const matHelmet = new THREE.MeshLambertMaterial({ color: 0xf4f6f8 });
+const matSki = new THREE.MeshLambertMaterial({ color: 0xffd23e });
+const matPole = new THREE.MeshLambertMaterial({ color: 0x888a99 });
+function partBox(sx, sy, sz, mat, ox, oy, oz) {
+  const g = new THREE.BoxGeometry(sx, sy, sz);
+  if (ox || oy || oz) g.translate(ox || 0, oy || 0, oz || 0);
+  return new THREE.Mesh(g, mat);
+}
+const skiL = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
+const skiR = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
+skiL.position.set(-0.21, 0.04, 0); skiR.position.set(0.21, 0.04, 0);
+const legL = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
+const legR = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
+legL.position.set(-0.19, 0.95, 0); legR.position.set(0.19, 0.95, 0);
+const torso = partBox(0.46, 0.58, 0.3, matJacket, 0, 0.29, 0);
+torso.position.set(0, 0.92, 0);
+const head = partBox(0.24, 0.26, 0.26, matHelmet);
+head.position.set(0, 0.72, 0.02);
+torso.add(head);
+const armL = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
+const armR = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
+armL.position.set(-0.29, 0.52, 0); armR.position.set(0.29, 0.52, 0);
+torso.add(armL); torso.add(armR);
+const poleL = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
+const poleR = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
+poleL.position.set(0, -0.5, 0); poleR.position.set(0, -0.5, 0);
+armL.add(poleL); armR.add(poleR);
+skier.add(skiL, skiR, legL, legR, torso);
+// soft blob shadow that hugs the snow
+const blobShadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 12),
+  new THREE.MeshBasicMaterial({ color: 0x2a3050, transparent: true, opacity: 0.28, depthWrite: false }));
+blobShadow.rotation.x = -Math.PI / 2;
+blobShadow.renderOrder = 1;
+scene.add(blobShadow);
+
+/* ═════════════════ particle pools (preallocated) ═════════════════ */
+const SPRAY_N = LOWFX ? 130 : 280;
+const sprayPos = new Float32Array(SPRAY_N * 3);
+const sprayVel = new Float32Array(SPRAY_N * 3);
+const sprayLife = new Float32Array(SPRAY_N);
+for (let i = 0; i < SPRAY_N; i++) sprayPos[i * 3 + 1] = -999;
+const sprayGeo = new THREE.BufferGeometry();
+const sprayAttr = new THREE.BufferAttribute(sprayPos, 3);
+sprayAttr.setUsage(THREE.DynamicDrawUsage);
+sprayGeo.setAttribute('position', sprayAttr);
+const spray = new THREE.Points(sprayGeo, new THREE.PointsMaterial({
+  color: 0xffffff, size: 0.34, sizeAttenuation: true, transparent: true, opacity: 0.9, depthWrite: false,
+}));
+spray.frustumCulled = false;
+scene.add(spray);
+let sprayHead = 0;
+function spawnSpray(x, y, z, vx, vy, vz, spread, n) {
+  for (let k = 0; k < n; k++) {
+    const i = sprayHead; sprayHead = (sprayHead + 1) % SPRAY_N;
+    sprayPos[i * 3] = x; sprayPos[i * 3 + 1] = y; sprayPos[i * 3 + 2] = z;
+    sprayVel[i * 3] = vx + (Math.random() - 0.5) * spread;
+    sprayVel[i * 3 + 1] = vy + Math.random() * spread * 0.7;
+    sprayVel[i * 3 + 2] = vz + (Math.random() - 0.5) * spread;
+    sprayLife[i] = 0.55 + Math.random() * 0.35;
+  }
+}
+const SNOWFALL_N = LOWFX ? 0 : 420;
+let snowfall = null;
+const snowPos = new Float32Array(Math.max(1, SNOWFALL_N) * 3);
+if (SNOWFALL_N > 0) {
+  const rr = mulberry32(SEED ^ 0xf1a4e5);
+  for (let i = 0; i < SNOWFALL_N; i++) {
+    snowPos[i * 3] = (rr() - 0.5) * 90;
+    snowPos[i * 3 + 1] = rr() * 46;
+    snowPos[i * 3 + 2] = (rr() - 0.5) * 90;
+  }
+  const g = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(snowPos, 3);
+  attr.setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('position', attr);
+  snowfall = new THREE.Points(g, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.17, sizeAttenuation: true, transparent: true, opacity: 0.65, depthWrite: false,
+  }));
+  snowfall.frustumCulled = false;
+  scene.add(snowfall);
+}
