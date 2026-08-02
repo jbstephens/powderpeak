@@ -3080,6 +3080,24 @@ function fitStage() {
 window.addEventListener('resize', fitStage);
 fitStage();
 
+/* ?split2: perf probe for the planned 2P mode — renders the world TWICE
+   side-by-side through two cameras (the honest cost of vertical split
+   screen: 2× draw calls + vertex work, same total fill). Debug only. */
+const SPLIT2 = QS.get('split2') === '1';
+const cam2 = new THREE.PerspectiveCamera(63, (VW / 2) / VH, 0.3, 1500);
+if (SPLIT2) { camera.aspect = (VW / 2) / VH; camera.updateProjectionMatrix(); }
+function renderSplitProbe() {
+  renderer.setScissorTest(true);
+  renderer.setViewport(0, 0, VW / 2, VH); renderer.setScissor(0, 0, VW / 2, VH);
+  renderer.render(scene, camera);
+  cam2.position.copy(camera.position); cam2.quaternion.copy(camera.quaternion);
+  cam2.translateX(-6); cam2.translateY(2); // offset view so culling differs like a real P2
+  renderer.setViewport(VW / 2, 0, VW / 2, VH); renderer.setScissor(VW / 2, 0, VW / 2, VH);
+  renderer.render(scene, cam2);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, VW, VH);
+}
+
 /* ═════════════════ main loop — fixed 60 Hz sim, rAF render ═════════════════ */
 let lastNow = performance.now(), accMs = 0;
 function frame(now) {
@@ -3105,7 +3123,8 @@ function frame(now) {
   // and dropped frames don't stretch the chase-cam lag
   const dtVis = Math.max(dtReal, n * DT);
   updateVisuals(dtVis, now);
-  renderer.render(scene, camera);
+  if (SPLIT2) renderSplitProbe();
+  else renderer.render(scene, camera);
   perfTelemetry();
   updateHUD();
 }
