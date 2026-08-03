@@ -470,6 +470,7 @@ function buildWorldScene(W) {
   /* checkpoint gates, start arch, finish arch (+ night lanterns, gold trim) */
   const glowMD = newMD(shadeFlat);          // additive gradient glows
   let startArch = null;
+  W.gateBoxes = [];                         // camera-clearance solids (harness)
   function pushGate(gi, big, checker, isStart) {
     const w = CW[gi] + 0.8;
     const lx = CX[gi] - CRX[gi] * w, lz = CZ[gi] - CRZ[gi] * w;
@@ -527,6 +528,12 @@ function buildWorldScene(W) {
           px2, topY - 0.75, pz2, 1.0, 0.83, 0.24, -CDX[gi], 0, -CDZ[gi]);
       }
     }
+    // bounding solids (both poles + the banner bar) so the harness can assert
+    // no chase camera ever sits inside arch/gate geometry
+    W.gateBoxes.push(
+      { x: lx, z: lz, dx: CDX[gi], dz: CDZ[gi], hw: 0.8, ht: 0.8, y0: ly - 1, y1: topY + 2.0 },
+      { x: rx, z: rz, dx: CDX[gi], dz: CDZ[gi], hw: 0.8, ht: 0.8, y0: ry - 1, y1: topY + 2.0 },
+      { x: bx, z: bz, dx: CDX[gi], dz: CDZ[gi], hw: span / 2 + 0.5, ht: 1.0, y0: topY - 0.4, y1: topY + 2.0 });
     if (isStart) startArch = { lx, lz, ly, rx, rz, ry, topY, yaw, span, bx, bz, rxv: CRX[gi], rzv: CRZ[gi] };
   }
   for (const gi of GATES) pushGate(gi, false, false, false);
@@ -828,6 +835,7 @@ function buildWorldScene(W) {
       shortcut: sc,
       snowman: { x: W.snowman.x, z: W.snowman.z, s: (FINISH_I - 40) * STEP },
       peaks: W.peaks,
+      gateBoxes: W.gateBoxes,
     };
   }
 }
@@ -840,45 +848,55 @@ for (const id of ['alp', 'nr']) {
   WORLDS[id] = Wd;
 }
 
-/* ═════════════════ the skier ═════════════════ */
-const skier = new THREE.Group();
-scene.add(skier);
-const matJacket = new THREE.MeshLambertMaterial({ color: 0xff5964 });
-const matPants = new THREE.MeshLambertMaterial({ color: 0x232744 });
-const matHelmet = new THREE.MeshLambertMaterial({ color: 0xf4f6f8 });
-const matSki = new THREE.MeshLambertMaterial({ color: 0xffd23e });
-const matPole = new THREE.MeshLambertMaterial({ color: 0x888a99 });
-function partBox(sx, sy, sz, mat, ox, oy, oz) {
-  const g = new THREE.BoxGeometry(sx, sy, sz);
-  if (ox || oy || oz) g.translate(ox || 0, oy || 0, oz || 0);
-  return new THREE.Mesh(g, mat);
+/* ═════════════════ the skiers — one full rig per player ═════════════════ */
+function buildSkierRig(jacketCol, skiCol) {
+  const group = new THREE.Group();
+  group.rotation.order = 'YXZ';
+  scene.add(group);
+  const matJacket = new THREE.MeshLambertMaterial({ color: jacketCol });
+  const matPants = new THREE.MeshLambertMaterial({ color: 0x232744 });
+  const matHelmet = new THREE.MeshLambertMaterial({ color: 0xf4f6f8 });
+  const matSki = new THREE.MeshLambertMaterial({ color: skiCol });
+  const matPole = new THREE.MeshLambertMaterial({ color: 0x888a99 });
+  function partBox(sx, sy, sz, mat, ox, oy, oz) {
+    const g = new THREE.BoxGeometry(sx, sy, sz);
+    if (ox || oy || oz) g.translate(ox || 0, oy || 0, oz || 0);
+    return new THREE.Mesh(g, mat);
+  }
+  const skiL = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
+  const skiR = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
+  skiL.position.set(-0.21, 0.04, 0); skiR.position.set(0.21, 0.04, 0);
+  const legL = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
+  const legR = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
+  legL.position.set(-0.19, 0.95, 0); legR.position.set(0.19, 0.95, 0);
+  const torso = partBox(0.46, 0.58, 0.3, matJacket, 0, 0.29, 0);
+  torso.position.set(0, 0.92, 0);
+  const head = partBox(0.24, 0.26, 0.26, matHelmet);
+  head.position.set(0, 0.72, 0.02);
+  torso.add(head);
+  const armL = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
+  const armR = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
+  armL.position.set(-0.29, 0.52, 0); armR.position.set(0.29, 0.52, 0);
+  torso.add(armL); torso.add(armR);
+  const poleL = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
+  const poleR = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
+  poleL.position.set(0, -0.5, 0); poleR.position.set(0, -0.5, 0);
+  armL.add(poleL); armR.add(poleR);
+  group.add(skiL, skiR, legL, legR, torso);
+  // soft blob shadow that hugs the snow
+  const blobShadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 12),
+    new THREE.MeshBasicMaterial({ color: 0x2a3050, transparent: true, opacity: 0.28, depthWrite: false }));
+  blobShadow.rotation.x = -Math.PI / 2;
+  blobShadow.renderOrder = 1;
+  scene.add(blobShadow);
+  return { group, skiL, skiR, legL, legR, torso, armL, armR, blobShadow,
+    pose: { crouch: 0.3, wedge: 0, air: 0, pitch: 0, roll: 0, crashSpin: 0 } };
 }
-const skiL = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
-const skiR = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
-skiL.position.set(-0.21, 0.04, 0); skiR.position.set(0.21, 0.04, 0);
-const legL = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
-const legR = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
-legL.position.set(-0.19, 0.95, 0); legR.position.set(0.19, 0.95, 0);
-const torso = partBox(0.46, 0.58, 0.3, matJacket, 0, 0.29, 0);
-torso.position.set(0, 0.92, 0);
-const head = partBox(0.24, 0.26, 0.26, matHelmet);
-head.position.set(0, 0.72, 0.02);
-torso.add(head);
-const armL = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
-const armR = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
-armL.position.set(-0.29, 0.52, 0); armR.position.set(0.29, 0.52, 0);
-torso.add(armL); torso.add(armR);
-const poleL = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
-const poleR = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
-poleL.position.set(0, -0.5, 0); poleR.position.set(0, -0.5, 0);
-armL.add(poleL); armR.add(poleR);
-skier.add(skiL, skiR, legL, legR, torso);
-// soft blob shadow that hugs the snow
-const blobShadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 12),
-  new THREE.MeshBasicMaterial({ color: 0x2a3050, transparent: true, opacity: 0.28, depthWrite: false }));
-blobShadow.rotation.x = -Math.PI / 2;
-blobShadow.renderOrder = 1;
-scene.add(blobShadow);
+// P1 rides the classic red kit; P2 a teal jacket on sunset skis. Both rigs
+// exist from boot (preallocated) — P2's is simply hidden outside a race.
+const rigs = [buildSkierRig(0xff5964, 0xffd23e), buildSkierRig(0x2fb7c9, 0xff9d2e)];
+rigs[1].group.visible = false;
+rigs[1].blobShadow.visible = false;
 
 /* ═════════════════ particle pools (preallocated) ═════════════════ */
 const SPRAY_N = LOWFX ? 130 : 280;

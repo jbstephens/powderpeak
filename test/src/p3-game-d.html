@@ -1,5 +1,7 @@
 
-/* ═════════════════ telemetry (read-only; the harness waits on tick) ═════════ */
+/* ═════════════ telemetry (read-only; the harness waits on tick) ═════════════
+   Top-level fields mirror PLAYER 1 exactly as they always have; __pp.race and
+   __pp.p2 mirror the 2P race state. Nothing in here is writable game state. */
 const TL = {
   tick: 0, state: 'title', speed: 0, pos: { x: 0, y: 0, z: 0 }, checkpoint: 0,
   mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
@@ -7,31 +9,71 @@ const TL = {
   mountain: '', trickName: '', airTricks: 0, boostPct: 0,
   snowman: false, goldArch: false, selectSel: 0,
   camRight: { x: 0, z: 0 },   // the REAL render camera's screen-right, in world
+  camPos: { x: 0, y: 0, z: 0 },
+  ndcX: 0,                    // P1 skier's screen-x in P1's REAL render camera
   perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
+  race: { prompt: false, joined: false, on: false, p2src: '', winner: -1,
+          finished: [false, false], times: [0, 0], gap: 0, rb: [1, 1] },
+  p2: { pos: { x: 0, y: 0, z: 0 }, speed: 0, s: 0, u: 0, heading: 0, time: 0,
+        checkpoint: 0, air: false, trick: false, tricks: 0, wobble: false,
+        mode: 'ground', state: 'title', trickName: '', boostPct: 0, snowman: false,
+        camRight: { x: 0, z: 0 }, camPos: { x: 0, y: 0, z: 0 }, ndcX: 0 },
 };
 window.__pp = TL;
+const _ndcV = new THREE.Vector3();      // preallocated: no per-frame garbage
 function syncTelemetry() {
+  const p1 = players[0], q = players[1];
   TL.tick = TICK;
-  TL.state = (state === S_RUN && P.crashT > 0) ? 'crash' : state;
-  TL.speed = P.v;
-  TL.pos.x = P.x; TL.pos.y = P.y; TL.pos.z = P.z;
-  TL.checkpoint = lastGateIdx;
-  TL.mode = P.air ? 'air' : (P.crashT > 0 ? 'crash' : 'ground');
-  TL.heading = P.heading;
-  TL.s = P.s; TL.u = P.u; TL.time = runTime;
-  TL.air = P.air;
-  TL.trick = P.trickT > 0;
-  TL.tricks = P.airN;
-  TL.wobble = P.wobbleT > 0;
+  TL.state = (state === S_RUN && p1.crashT > 0) ? 'crash' : state;
+  TL.speed = p1.v;
+  TL.pos.x = p1.x; TL.pos.y = p1.y; TL.pos.z = p1.z;
+  TL.checkpoint = p1.gateIdx;
+  TL.mode = p1.air ? 'air' : (p1.crashT > 0 ? 'crash' : 'ground');
+  TL.heading = p1.heading;
+  TL.s = p1.s; TL.u = p1.u; TL.time = p1.runTime;
+  TL.air = p1.air;
+  TL.trick = p1.trickT > 0;
+  TL.tricks = p1.airN;
+  TL.wobble = p1.wobbleT > 0;
   TL.mountain = W ? W.cfg.id : '';
-  TL.trickName = lastTrickName;
-  TL.airTricks = P.airN;
-  TL.boostPct = lastBoostPct;
-  TL.snowman = smHitThisRun;
+  TL.trickName = p1.trickName;
+  TL.airTricks = p1.airN;
+  TL.boostPct = p1.boostPct;
+  TL.snowman = p1.smHit;
   TL.goldArch = W ? W.goldTrim.visible : false;
   TL.selectSel = selectSel;
   const me = camera.matrixWorld.elements;  // column 0 = camera local X = screen-right
   TL.camRight.x = me[0]; TL.camRight.z = me[2];
+  TL.camPos.x = p1.cam.pos.x; TL.camPos.y = p1.cam.pos.y; TL.camPos.z = p1.cam.pos.z;
+  _ndcV.set(p1.x, p1.y + 1.0, p1.z).project(camera);
+  TL.ndcX = _ndcV.x;
+  const R = TL.race;
+  R.prompt = race.prompt; R.joined = race.joined; R.on = race.on; R.p2src = race.p2src;
+  R.winner = race.winner;
+  R.finished[0] = p1.finished; R.finished[1] = q.finished;
+  R.times[0] = p1.finished ? p1.finalTime : p1.runTime;
+  R.times[1] = q.finished ? q.finalTime : q.runTime;
+  R.gap = p1.s - q.s;
+  R.rb[0] = p1.rbMult; R.rb[1] = q.rbMult;
+  const T2 = TL.p2;
+  T2.pos.x = q.x; T2.pos.y = q.y; T2.pos.z = q.z;
+  T2.speed = q.v; T2.s = q.s; T2.u = q.u; T2.heading = q.heading;
+  T2.time = q.finished ? q.finalTime : q.runTime;
+  T2.checkpoint = q.gateIdx;
+  T2.air = q.air; T2.trick = q.trickT > 0; T2.tricks = q.airN; T2.wobble = q.wobbleT > 0;
+  T2.mode = q.air ? 'air' : (q.crashT > 0 ? 'crash' : 'ground');
+  T2.state = !race.on ? state
+    : q.crashT > 0 ? 'crash'
+    : (q.finished || state === S_RESULTS) ? 'finish'
+    : state;
+  T2.trickName = q.trickName; T2.boostPct = q.boostPct; T2.snowman = q.smHit;
+  const m2 = cam2.matrixWorld.elements;
+  T2.camRight.x = m2[0]; T2.camRight.z = m2[2];
+  T2.camPos.x = q.cam.pos.x; T2.camPos.y = q.cam.pos.y; T2.camPos.z = q.cam.pos.z;
+  if (race.on) {
+    _ndcV.set(q.x, q.y + 1.0, q.z).project(cam2);
+    T2.ndcX = _ndcV.x;
+  }
 }
 
 /* ═════════════════ mountain switching ═════════════════ */
@@ -76,9 +118,10 @@ function setMountain(id) {
   window.__ppShortcut = W.dump.shortcut;
   window.__ppSnowman = W.dump.snowman;
   window.__ppPeaks = W.dump.peaks;
+  window.__ppGateBoxes = W.dump.gateBoxes;
   // stale spray from the other mountain never lingers
   for (let i = 0; i < SPRAY_N; i++) { sprayLife[i] = 0; sprayPos[i * 3 + 1] = -999; }
-  placeAtSample(2);
+  placeAtSample(players[0], 2);
 }
 
 /* ═════════════════ mountain select screen ═════════════════ */
@@ -90,182 +133,217 @@ function updateSelectCards() {
     el('mbest' + i).textContent = b ? ('BEST ' + fmtTime(b.time)) : 'NOT YET SKIED';
     const md = b ? medalFor(b.time, Wd.cfg.medals) : '';
     const mel = el('mmedal' + i);
-    mel.textContent = md ? (md + ' MEDAL') : ' ';
+    mel.textContent = md ? (md + ' MEDAL') : ' ';
     mel.className = 'mmedal ' + md.toLowerCase();
   }
 }
 function gotoSelect() {
+  setSplit(false);
+  race.on = false; race.winner = -1;
+  rbanEl[0].classList.remove('show'); rbanEl[1].classList.remove('show');
+  countdownEl.style.display = 'none';
   state = S_SELECT;
   setBodyState(S_SELECT);
   const cur = MTN_ORDER.indexOf(W.cfg.id);
   selectSel = cur >= 0 ? cur : 0;
   updateSelectCards();
 }
-
-/* ═════════════════ camera ═════════════════ */
-const camPos = new THREE.Vector3(0, 30, -40);
-const camLook = new THREE.Vector3(0, 0, 0);
-const camDir = { x: 0, z: 1 };
-let camFov = 63;
-function snapCameraBehind() {
-  const dx = Math.sin(P.heading), dz = Math.cos(P.heading);
-  camDir.x = dx; camDir.z = dz;
-  camPos.set(P.x - dx * 9.2, P.y + 3.7, P.z - dz * 9.2);
-  camLook.set(P.x + dx * 7.5, P.y + 1.1, P.z + dz * 7.5);
+function secondInputPresent() {
+  // a second input exists: a pad in slot 1, or the keyboard once P1 has
+  // shown they're on a pad (there's no way to detect a keyboard directly)
+  return !!(PAD[1] && PAD[1].connected) || !!(padUsed && PAD[0] && PAD[0].connected);
 }
-function updateCamera(dt, now) {
+let p2PromptShown = '';
+function updateP2Prompt() {
+  let cls, txt;
+  if (race.joined) {
+    cls = 'joined';
+    txt = 'P2 JOINED · ' + (race.p2src === 'kbd' ? 'ESC TO LEAVE' : '○ TO LEAVE');
+  } else if (race.prompt) {
+    cls = 'show';
+    txt = 'P2 PRESS ✕ TO JOIN';
+  } else { cls = ''; txt = ''; }
+  const key = cls + '|' + txt;
+  if (key !== p2PromptShown) {
+    p2PromptShown = key;
+    p2PromptEl.className = cls;
+    if (txt) p2PromptEl.textContent = txt;
+  }
+}
+
+/* ═════════════════ cameras — one chase rig per player ═════════════════ */
+function snapCameraBehind(pl) {
+  const cs = pl.cam;
+  const dx = Math.sin(pl.heading), dz = Math.cos(pl.heading);
+  cs.dirx = dx; cs.dirz = dz;
+  cs.pos.set(pl.x - dx * 9.2, pl.y + 3.7, pl.z - dz * 9.2);
+  cs.look.set(pl.x + dx * 7.5, pl.y + 1.1, pl.z + dz * 7.5);
+}
+function snapAllCams() {
+  snapCameraBehind(players[0]);
+  if (race.on) snapCameraBehind(players[1]);
+}
+function updateCameraFor(pl, cam, dt, now) {
+  const cs = pl.cam;
   if (state === S_TITLE || state === S_SELECT) {
     const t = now * 0.00006;
     const ci = 60;
     const cx = CX[ci], cz = CZ[ci], cy2 = CY[ci];
-    camPos.set(cx + Math.cos(t) * 52, cy2 + 22 + Math.sin(t * 1.7) * 5, cz + Math.sin(t) * 52);
-    camLook.set(CX[ci + 40], CY[ci + 40] + 4, CZ[ci + 40]);
-  } else if (state === S_FINISH) {
+    cs.pos.set(cx + Math.cos(t) * 52, cy2 + 22 + Math.sin(t * 1.7) * 5, cz + Math.sin(t) * 52);
+    cs.look.set(CX[ci + 40], CY[ci + 40] + 4, CZ[ci + 40]);
+  } else if (state === S_FINISH || (race.on && (pl.finished || state === S_RESULTS))) {
     const t = now * 0.00018;
-    camPos.x += (P.x + Math.cos(t) * 13 - camPos.x) * Math.min(1, dt * 2);
-    camPos.y += (P.y + 5.5 - camPos.y) * Math.min(1, dt * 2);
-    camPos.z += (P.z + Math.sin(t) * 13 - camPos.z) * Math.min(1, dt * 2);
-    camLook.x += (P.x - camLook.x) * Math.min(1, dt * 3);
-    camLook.y += (P.y + 1 - camLook.y) * Math.min(1, dt * 3);
-    camLook.z += (P.z - camLook.z) * Math.min(1, dt * 3);
+    cs.pos.x += (pl.x + Math.cos(t) * 13 - cs.pos.x) * Math.min(1, dt * 2);
+    cs.pos.y += (pl.y + 5.5 - cs.pos.y) * Math.min(1, dt * 2);
+    cs.pos.z += (pl.z + Math.sin(t) * 13 - cs.pos.z) * Math.min(1, dt * 2);
+    cs.look.x += (pl.x - cs.look.x) * Math.min(1, dt * 3);
+    cs.look.y += (pl.y + 1 - cs.look.y) * Math.min(1, dt * 3);
+    cs.look.z += (pl.z - cs.look.z) * Math.min(1, dt * 3);
   } else {
     // chase cam: smoothed forward dir, pulls back a touch in the air
-    const dx = Math.sin(P.heading), dz = Math.cos(P.heading);
+    const dx = Math.sin(pl.heading), dz = Math.cos(pl.heading);
     const kd = Math.min(1, dt * 3.2);
-    camDir.x += (dx - camDir.x) * kd;
-    camDir.z += (dz - camDir.z) * kd;
-    const dl = Math.hypot(camDir.x, camDir.z) || 1;
-    camDir.x /= dl; camDir.z /= dl;
+    cs.dirx += (dx - cs.dirx) * kd;
+    cs.dirz += (dz - cs.dirz) * kd;
+    const dl = Math.hypot(cs.dirx, cs.dirz) || 1;
+    cs.dirx /= dl; cs.dirz /= dl;
     // trick-cam: punch in while the skier spins so the flip reads on screen
-    const dist = 9.2 + (P.air ? 1.5 : 0) + P.v * 0.045 - (P.trickT > 0 ? 4.6 : 0);
+    const dist = 9.2 + (pl.air ? 1.5 : 0) + pl.v * 0.045 - (pl.trickT > 0 ? 4.6 : 0);
     const kp = Math.min(1, dt * 6.5);
-    camPos.x += (P.x - camDir.x * dist - camPos.x) * kp;
-    camPos.y += (P.y + 3.7 - camPos.y) * kp;
-    camPos.z += (P.z - camDir.z * dist - camPos.z) * kp;
+    cs.pos.x += (pl.x - cs.dirx * dist - cs.pos.x) * kp;
+    cs.pos.y += (pl.y + 3.7 - cs.pos.y) * kp;
+    cs.pos.z += (pl.z - cs.dirz * dist - cs.pos.z) * kp;
     const kl = Math.min(1, dt * 8);
-    camLook.x += (P.x + camDir.x * 7.5 - camLook.x) * kl;
-    camLook.y += (P.y + 1.1 - camLook.y) * kl;
-    camLook.z += (P.z + camDir.z * 7.5 - camLook.z) * kl;
+    cs.look.x += (pl.x + cs.dirx * 7.5 - cs.look.x) * kl;
+    cs.look.y += (pl.y + 1.1 - cs.look.y) * kl;
+    cs.look.z += (pl.z + cs.dirz * 7.5 - cs.look.z) * kl;
     // never sink the camera into the snow
-    const ch = terrainH(camPos.x, camPos.z);
-    if (camPos.y < ch + 1.6) camPos.y = ch + 1.6;
-    const wantFov = 63 + clamp(P.v, 0, 34) * 0.33 - (P.trickT > 0 ? 9 : 0);
-    camFov += (wantFov - camFov) * Math.min(1, dt * 7);
-    if (Math.abs(camFov - camera.fov) > 0.25) {
-      camera.fov = camFov;
-      camera.updateProjectionMatrix();
+    const ch = terrainH(cs.pos.x, cs.pos.z);
+    if (cs.pos.y < ch + 1.6) cs.pos.y = ch + 1.6;
+    const wantFov = 63 + clamp(pl.v, 0, 34) * 0.33 - (pl.trickT > 0 ? 9 : 0);
+    cs.fov += (wantFov - cs.fov) * Math.min(1, dt * 7);
+    if (Math.abs(cs.fov - cam.fov) > 0.25) {
+      cam.fov = cs.fov;
+      cam.updateProjectionMatrix();
     }
   }
-  camera.position.copy(camPos);
-  camera.lookAt(camLook);
-  W.sky.position.copy(camPos);
+  cam.position.copy(cs.pos);
+  cam.lookAt(cs.look);
 }
 
 /* ═════════════════ skier pose + per-frame visuals ═════════════════ */
-skier.rotation.order = 'YXZ';
-let poseCrouch = 0.3, poseWedge = 0, poseAir = 0, smPitch = 0, smRoll = 0;
-let crashSpin = 0;
-function updateSkier(dt) {
-  skier.position.set(P.x, P.y, P.z);
-  if (P.crashT > 0) {
-    crashSpin += dt;
-    skier.rotation.y = P.heading;
-    skier.rotation.x = crashSpin * 8.5;
-    skier.rotation.z = crashSpin * 4.2;
-    skier.position.y = P.y + Math.abs(Math.sin(crashSpin * 7)) * 0.5 * Math.max(0, P.crashT / 1.2);
+function updateSkierFor(pl, rig, dt) {
+  const g = rig.group, pose = rig.pose;
+  g.position.set(pl.x, pl.y, pl.z);
+  if (pl.crashT > 0) {
+    pose.crashSpin += dt;
+    g.rotation.y = pl.heading;
+    g.rotation.x = pose.crashSpin * 8.5;
+    g.rotation.z = pose.crashSpin * 4.2;
+    g.position.y = pl.y + Math.abs(Math.sin(pose.crashSpin * 7)) * 0.5 * Math.max(0, pl.crashT / 1.2);
     return;
   }
-  crashSpin = 0;
-  const tuckT = (state === S_RUN && inp.tuck && !P.air) ? 1 : 0;
-  const brakeT = (state === S_RUN && (inp.brake || state === S_FINISH) && !P.air) ? 1 : 0;
-  const airT = P.air ? 1 : 0;
+  pose.crashSpin = 0;
+  const active = state === S_RUN && !pl.finished;
+  const tuckT = (active && pl.inp.tuck && !pl.air) ? 1 : 0;
+  const brakeT = (active && pl.inp.brake && !pl.air) ? 1 : 0;
+  const airT = pl.air ? 1 : 0;
   const ks = Math.min(1, dt * 8);
-  poseCrouch += ((tuckT ? 1 : brakeT ? 0.15 : 0.3) - poseCrouch) * ks;
-  poseWedge += (brakeT - poseWedge) * ks;
-  poseAir += (airT - poseAir) * ks;
+  pose.crouch += ((tuckT ? 1 : brakeT ? 0.15 : 0.3) - pose.crouch) * ks;
+  pose.wedge += (brakeT - pose.wedge) * ks;
+  pose.air += (airT - pose.air) * ks;
 
-  const targetPitch = P.air ? clamp(-P.vy * 0.05, -0.45, 0.35) : -Math.atan(P.grade);
-  smPitch += (targetPitch - smPitch) * Math.min(1, dt * 6);
-  const targetRoll = -inp.steer * 0.40 * Math.min(1, P.v / 16) + clamp(P.latSlope, -0.8, 0.8) * 0.35;
-  smRoll += (targetRoll - smRoll) * Math.min(1, dt * 7);
+  const targetPitch = pl.air ? clamp(-pl.vy * 0.05, -0.45, 0.35) : -Math.atan(pl.grade);
+  pose.pitch += (targetPitch - pose.pitch) * Math.min(1, dt * 6);
+  const targetRoll = -pl.inp.steer * 0.40 * Math.min(1, pl.v / 16) + clamp(pl.latSlope, -0.8, 0.8) * 0.35;
+  pose.roll += (targetRoll - pose.roll) * Math.min(1, dt * 7);
   // air tricks: each type spins a different clean whole-group axis over
   // TRICK_TIME (all end exactly re-aligned)
-  let ry = P.heading, rx = smPitch;
-  if (P.trickT > 0) {
-    const prog = 1 - P.trickT / TRICK_TIME;
-    if (P.trickType === TK_BACK) rx = smPitch - prog * Math.PI * 2;
-    else if (P.trickType === TK_FRONT) rx = smPitch + prog * Math.PI * 2;
-    else if (P.trickType === TK_SPIN_L) ry = P.heading + prog * Math.PI * 2;
-    else ry = P.heading - prog * Math.PI * 2;
+  let ry = pl.heading, rx = pose.pitch;
+  if (pl.trickT > 0) {
+    const prog = 1 - pl.trickT / TRICK_TIME;
+    if (pl.trickType === TK_BACK) rx = pose.pitch - prog * Math.PI * 2;
+    else if (pl.trickType === TK_FRONT) rx = pose.pitch + prog * Math.PI * 2;
+    else if (pl.trickType === TK_SPIN_L) ry = pl.heading + prog * Math.PI * 2;
+    else ry = pl.heading - prog * Math.PI * 2;
   }
-  skier.rotation.y = ry;
-  skier.rotation.x = rx;
-  skier.rotation.z = smRoll;
+  g.rotation.y = ry;
+  g.rotation.x = rx;
+  g.rotation.z = pose.roll;
 
-  const hipY = 0.95 - 0.34 * poseCrouch;
-  legL.position.y = hipY; legR.position.y = hipY;
+  const hipY = 0.95 - 0.34 * pose.crouch;
+  rig.legL.position.y = hipY; rig.legR.position.y = hipY;
   const legScale = Math.max(0.4, (hipY - 0.30) / 0.6);
-  legL.scale.y = legScale; legR.scale.y = legScale;
-  torso.position.y = hipY - 0.02;
-  torso.rotation.x = 0.35 + 0.85 * poseCrouch - 0.30 * poseAir;
-  const spread = 0.25 + poseWedge * 0.75 + poseAir * 0.95;
-  armL.rotation.z = -spread; armR.rotation.z = spread;
-  armL.rotation.x = -0.3 - poseCrouch * 0.95 + poseAir * 0.5;
-  armR.rotation.x = armL.rotation.x;
-  const wedgeA = poseWedge * 0.36;
-  skiL.rotation.y = wedgeA; skiR.rotation.y = -wedgeA;
-  skiL.rotation.x = -0.12 * poseAir; skiR.rotation.x = -0.12 * poseAir;
-  skiL.position.x = -(0.21 + 0.15 * poseWedge); skiR.position.x = 0.21 + 0.15 * poseWedge;
+  rig.legL.scale.y = legScale; rig.legR.scale.y = legScale;
+  rig.torso.position.y = hipY - 0.02;
+  rig.torso.rotation.x = 0.35 + 0.85 * pose.crouch - 0.30 * pose.air;
+  const spread = 0.25 + pose.wedge * 0.75 + pose.air * 0.95;
+  rig.armL.rotation.z = -spread; rig.armR.rotation.z = spread;
+  rig.armL.rotation.x = -0.3 - pose.crouch * 0.95 + pose.air * 0.5;
+  rig.armR.rotation.x = rig.armL.rotation.x;
+  const wedgeA = pose.wedge * 0.36;
+  rig.skiL.rotation.y = wedgeA; rig.skiR.rotation.y = -wedgeA;
+  rig.skiL.rotation.x = -0.12 * pose.air; rig.skiR.rotation.x = -0.12 * pose.air;
+  rig.skiL.position.x = -(0.21 + 0.15 * pose.wedge); rig.skiR.position.x = 0.21 + 0.15 * pose.wedge;
 
-  blobShadow.position.set(P.x, (P.air ? P.y - (P.y - terrainHShadow()) : P.y) + 0.06, P.z);
-  const airH = P.air ? clamp(P.y - blobShadow.position.y + 0.06, 0, 8) : 0;
-  blobShadow.material.opacity = 0.28 * (1 - airH / 9);
+  const shadowGY = pl.air ? terrainH(pl.x, pl.z) : pl.y;
+  rig.blobShadow.position.set(pl.x, shadowGY + 0.06, pl.z);
+  const airH = pl.air ? clamp(pl.y - rig.blobShadow.position.y + 0.06, 0, 8) : 0;
+  rig.blobShadow.material.opacity = 0.28 * (1 - airH / 9);
   const shScale = 1 + airH * 0.1;
-  blobShadow.scale.set(shScale, shScale, 1);
+  rig.blobShadow.scale.set(shScale, shScale, 1);
 }
-function terrainHShadow() { return P.air ? terrainH(P.x, P.z) : P.y; }
 
-function updateVisuals(dt, now) {
-  updateCamera(dt, now);
-  updateSkier(dt);
+function cullTilesFor(cam) {
   // tile culling by camera distance (fog hides the pop)
-  const cxp = camera.position.x, czp = camera.position.z;
+  const cxp = cam.position.x, czp = cam.position.z;
   const tiles = W.tiles;
   for (let i = 0; i < tiles.length; i++) {
     const t = tiles[i];
     const ddx = t.cx - cxp, ddz = t.cz - czp;
     t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400; // 520^2
   }
+}
+
+function updateVisuals(dt, now) {
+  updateCameraFor(players[0], camera, dt, now);
+  if (splitOn) updateCameraFor(players[1], cam2, dt, now);
+  updateSkierFor(players[0], rigs[0], dt);
+  if (splitOn) updateSkierFor(players[1], rigs[1], dt);
+  if (!splitOn) {
+    cullTilesFor(camera);
+    W.sky.position.copy(camera.position);
+  }
   // NIGHT RIDGE sky life: aurora sway + one pooled shooting star. Whole-mesh
   // transform/opacity only — geometry never touched per frame.
   if (W.extras) {
-    const E = W.extras;
-    E.aurora.rotation.y = Math.sin(now * 0.00005) * 0.06;
-    E.aurora.material.opacity = 0.66 + 0.22 * Math.sin(now * 0.00013 + 1.3);
-    if (E.starActive > 0) {
-      E.starActive -= dt;
-      const t = clamp(1 - E.starActive / 0.8, 0, 1);
-      E.star.position.set(E.sx + E.svx * t, E.sy + E.svy * t, E.sz);
-      E.star.material.opacity = Math.sin(Math.PI * t) * 0.9;
-      if (E.starActive <= 0) {
-        E.star.visible = false;
-        E.star.material.opacity = 0;
-        E.starT = 25 + Math.random() * 15;      // next one in ~25-40 s
+    const E2 = W.extras;
+    E2.aurora.rotation.y = Math.sin(now * 0.00005) * 0.06;
+    E2.aurora.material.opacity = 0.66 + 0.22 * Math.sin(now * 0.00013 + 1.3);
+    if (E2.starActive > 0) {
+      E2.starActive -= dt;
+      const t = clamp(1 - E2.starActive / 0.8, 0, 1);
+      E2.star.position.set(E2.sx + E2.svx * t, E2.sy + E2.svy * t, E2.sz);
+      E2.star.material.opacity = Math.sin(Math.PI * t) * 0.9;
+      if (E2.starActive <= 0) {
+        E2.star.visible = false;
+        E2.star.material.opacity = 0;
+        E2.starT = 25 + Math.random() * 15;      // next one in ~25-40 s
       }
     } else if (state !== S_PAUSE) {
-      E.starT -= dt;
-      if (E.starT <= 0) {
-        E.starActive = 0.8;
-        E.sx = -450 + Math.random() * 900;
-        E.sy = 390 + Math.random() * 150;
-        E.sz = 680 + Math.random() * 260;
-        E.svx = (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 150);
-        E.svy = -(110 + Math.random() * 90);
-        E.star.rotation.order = 'YXZ';
-        E.star.rotation.y = Math.atan2(E.svx, 0);
-        E.star.rotation.x = -Math.atan2(E.svy, Math.abs(E.svx));
-        E.star.position.set(E.sx, E.sy, E.sz);
-        E.star.visible = true;
+      E2.starT -= dt;
+      if (E2.starT <= 0) {
+        E2.starActive = 0.8;
+        E2.sx = -450 + Math.random() * 900;
+        E2.sy = 390 + Math.random() * 150;
+        E2.sz = 680 + Math.random() * 260;
+        E2.svx = (Math.random() < 0.5 ? -1 : 1) * (200 + Math.random() * 150);
+        E2.svy = -(110 + Math.random() * 90);
+        E2.star.rotation.order = 'YXZ';
+        E2.star.rotation.y = Math.atan2(E2.svx, 0);
+        E2.star.rotation.x = -Math.atan2(E2.svy, Math.abs(E2.svx));
+        E2.star.position.set(E2.sx, E2.sy, E2.sz);
+        E2.star.visible = true;
       }
     }
   }
@@ -274,41 +352,106 @@ function updateVisuals(dt, now) {
     snowfall.position.set(camera.position.x - 45, camera.position.y - 20, camera.position.z - 45);
     snowfall.geometry.getAttribute('position').needsUpdate = true;
   }
-  // audio follows the sim
+  // audio follows the sim (in a race, the louder of the two skiers)
   if (ac) {
     const duck = (state === S_PAUSE || state === S_TITLE || state === S_SELECT) ? 0.25 : 1;
-    windGain.gain.value = Math.min(0.20, P.v * 0.006) * duck;
-    windFilt.frequency.value = 260 + P.v * 26;
-    carveGain.gain.value = (!P.air && state === S_RUN)
-      ? Math.min(0.22, (Math.abs(inp.steer) * P.v * 0.006 + (inp.brake ? P.v * 0.005 : 0))) : 0;
+    const vTop = splitOn ? Math.max(players[0].v, players[1].v) : players[0].v;
+    windGain.gain.value = Math.min(0.20, vTop * 0.006) * duck;
+    windFilt.frequency.value = 260 + vTop * 26;
+    let cg = 0;
+    if (state === S_RUN) {
+      const a = players[0];
+      if (!a.air) cg = Math.min(0.22, Math.abs(a.inp.steer) * a.v * 0.006 + (a.inp.brake ? a.v * 0.005 : 0));
+      if (splitOn) {
+        const b = players[1];
+        if (!b.air) {
+          const cg2 = Math.min(0.22, Math.abs(b.inp.steer) * b.v * 0.006 + (b.inp.brake ? b.v * 0.005 : 0));
+          if (cg2 > cg) cg = cg2;
+        }
+      }
+    }
+    carveGain.gain.value = cg;
   }
-  // respawn white flash decay
-  if (respawnFadeT > 0) {
-    respawnFadeT -= dt;
-    if (respawnFadeT <= 0) fadeWhite.style.opacity = '0';
+  // respawn white flash decay (full screen in 1P, own half in a race)
+  for (let i = 0; i < 2; i++) {
+    const pl = players[i];
+    if (pl.fadeT > 0) {
+      pl.fadeT -= dt;
+      if (pl.fadeT <= 0 && pl.fadeEl) pl.fadeEl.style.opacity = '0';
+    }
   }
 }
 
-/* ═════════════════ HUD per-frame (only touch DOM on change) ═════════════════ */
+/* ═════════════ HUD per-frame (only touch DOM on change) ═════════════ */
 let lastTimeStr = '', lastKmh = -1, lastMarkI = -1, lastGradeStr = '', gradeCounter = 0;
+const lastRH = [
+  { kmh: -1, sec: '', gap: '', mark: -1 },
+  { kmh: -1, sec: '', gap: '', mark: -1 },
+];
+function resetRaceHudCache() {
+  lastTimeStr = '';
+  for (let i = 0; i < 2; i++) {
+    lastRH[i].kmh = -1; lastRH[i].sec = ''; lastRH[i].gap = ''; lastRH[i].mark = -1;
+  }
+}
 function updateHUD() {
-  const t = state === S_FINISH ? finalTime : runTime;
+  if (race.on) {
+    // shared big race clock spanning the seam
+    const t = Math.max(
+      players[0].finished ? players[0].finalTime : players[0].runTime,
+      players[1].finished ? players[1].finalTime : players[1].runTime);
+    const str = fmtTime(t);
+    if (str !== lastTimeStr) { lastTimeStr = str; timeText.textContent = str; }
+    for (let i = 0; i < 2; i++) {
+      const pl = players[i], o = players[1 - i], L = lastRH[i];
+      const kmh = Math.round(pl.v * 3.6);
+      if (kmh !== L.kmh) { L.kmh = kmh; rnumEl[i].textContent = String(kmh); }
+      const sec = String(Math.min(3, pl.gateIdx) + 1);
+      if (sec !== L.sec) { L.sec = sec; rsecN[i].textContent = sec; }
+      let gtxt, gcls;
+      if (pl.finished || o.finished) { gtxt = ''; gcls = 'rgap'; }
+      else {
+        const g = Math.round(pl.s - o.s);
+        if (g >= 1) { gtxt = '▲ ' + g + 'm'; gcls = 'rgap good'; }
+        else if (g <= -1) { gtxt = '▼ ' + (-g) + 'm'; gcls = 'rgap bad'; }
+        else { gtxt = 'EVEN'; gcls = 'rgap even'; }
+      }
+      if (gtxt !== L.gap) {
+        L.gap = gtxt;
+        rgapEl[i].textContent = gtxt;
+        rgapEl[i].className = gcls;      // position comes from the #rgapN id
+      }
+      if (pl.curI !== L.mark) {
+        L.mark = pl.curI;
+        const m = i === 0 ? profMarker : profMarker2;
+        m.style.transform = 'translate(' + profPX[pl.curI].toFixed(1) + 'px,' + profPY[pl.curI].toFixed(1) + 'px)';
+      }
+    }
+    if (++gradeCounter >= 30) {
+      gradeCounter = 0;
+      const gs = Math.round(Math.abs(players[0].grade) * 100) + '%';
+      if (gs !== lastGradeStr) { lastGradeStr = gs; gradePct.textContent = gs; }
+    }
+    return;
+  }
+  const p1 = players[0];
+  const t = state === S_FINISH ? p1.finalTime : p1.runTime;
   const str = fmtTime(t);
   if (str !== lastTimeStr) { lastTimeStr = str; timeText.textContent = str; }
-  const kmh = Math.round(P.v * 3.6);
+  const kmh = Math.round(p1.v * 3.6);
   if (kmh !== lastKmh) {
     lastKmh = kmh;
     speedNum.textContent = String(kmh);
     const deg = -128 + clamp(kmh, 0, 160) / 160 * 256;
     needle.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)';
   }
-  if (P.curI !== lastMarkI) {
-    lastMarkI = P.curI;
-    profMarker.style.transform = 'translate(' + profPX[P.curI].toFixed(1) + 'px,' + profPY[P.curI].toFixed(1) + 'px)';
+  if (p1.curI !== lastMarkI) {
+    lastMarkI = p1.curI;
+    profMarker.style.transform = 'translate(' + profPX[p1.curI].toFixed(1) + 'px,' + profPY[p1.curI].toFixed(1) + 'px)';
   }
   if (++gradeCounter >= 30) {
     gradeCounter = 0;
-    const gs = Math.round(Math.abs(P.grade) * 100) + '%';
+    const gs = Math.round(Math.abs(p1.grade) * 100) + '%';
     if (gs !== lastGradeStr) { lastGradeStr = gs; gradePct.textContent = gs; }
   }
 }
@@ -317,57 +460,79 @@ function updateHUD() {
 function updatePauseSel() {
   el('mi0').className = 'mitem' + (pauseSel === 0 ? ' sel' : '');
   el('mi1').className = 'mitem' + (pauseSel === 1 ? ' sel' : '');
+  el('mi2').className = 'mitem' + (pauseSel === 2 ? ' sel' : '');
 }
 function menuLogic(dt) {
+  const e0 = E[0], e1 = E[1];
+  race.prompt = state === S_SELECT && !race.joined && secondInputPresent();
   if (state === S_TITLE) {
     // START quick-starts the last-played mountain; anything else opens
     // the mountain select
-    if (edges.pause) { sfx.jingle(); startRun(); snapCameraBehind(); }
-    else if (edges.confirm || edges.any) { sfx.menuMove(); gotoSelect(); }
+    if (e0.pause || e1.pause) { sfx.jingle(); startRun(); snapAllCams(); }
+    else if (e0.confirm || e0.any || e1.any) { sfx.menuMove(); gotoSelect(); }
   } else if (state === S_SELECT) {
-    if (edges.selCard >= 0) {           // touch: tap selects, tap again confirms
-      if (edges.selCard === selectSel) edges.confirm = true;
-      else { selectSel = edges.selCard; updateSelectCards(); sfx.menuMove(); }
+    updateP2Prompt();
+    // P2 join / un-join (pad slot 1; keyboard joins in gatherInput routing)
+    if (!race.joined) {
+      if (e1.confirm && PAD[1] && PAD[1].connected) joinP2('pad');
+    } else if (race.p2src === 'pad' && e1.back) {
+      unjoinP2();
+    } else if (race.p2src === 'kbd' && (e1.back || e1.pause)) {
+      unjoinP2();
     }
-    if (edges.left && selectSel !== 0) { selectSel = 0; updateSelectCards(); sfx.menuMove(); }
-    else if (edges.right && selectSel !== 1) { selectSel = 1; updateSelectCards(); sfx.menuMove(); }
-    if (edges.confirm) {
+    if (e0.selCard >= 0) {              // touch: tap selects, tap again confirms
+      if (e0.selCard === selectSel) e0.confirm = true;
+      else { selectSel = e0.selCard; updateSelectCards(); sfx.menuMove(); }
+    }
+    if (e0.left && selectSel !== 0) { selectSel = 0; updateSelectCards(); sfx.menuMove(); }
+    else if (e0.right && selectSel !== 1) { selectSel = 1; updateSelectCards(); sfx.menuMove(); }
+    if (e0.confirm) {
       setMountain(MTN_ORDER[selectSel]);
       sfx.jingle();
-      startRun(); snapCameraBehind();
-    } else if (edges.back || edges.pause) { sfx.menuMove(); gotoTitle(); }
+      if (race.joined) startRace(); else startRun();
+      snapAllCams();
+    } else if (e0.back || e0.pause) { sfx.menuMove(); gotoTitle(); }
   } else if (state === S_PAUSE) {
-    if (edges.up || edges.down) { pauseSel = 1 - pauseSel; updatePauseSel(); sfx.menuMove(); }
-    if (edges.pause) { state = pausedFrom; setBodyState(state); }
-    else if (edges.confirm) {
+    const nIt = race.on ? 3 : 2;
+    if (e0.up || e1.up) { pauseSel = (pauseSel + nIt - 1) % nIt; updatePauseSel(); sfx.menuMove(); }
+    else if (e0.down || e1.down) { pauseSel = (pauseSel + 1) % nIt; updatePauseSel(); sfx.menuMove(); }
+    if (e0.pause || e1.pause) { state = pausedFrom; setBodyState(state); }
+    else if (e0.confirm || e1.confirm) {
       if (pauseSel === 0) { state = pausedFrom; setBodyState(state); }
-      else { startRun(); snapCameraBehind(); }
+      else if (pauseSel === 1) { if (race.on) startRace(); else startRun(); snapAllCams(); }
+      else gotoSelect();
     }
   } else if (state === S_RUN || state === S_COUNT) {
-    if (edges.pause) {
+    // START from EITHER player pauses both (P2's pause only exists in a race)
+    if (e0.pause || (race.on && e1.pause)) {
       pausedFrom = state;
       state = S_PAUSE;
-      pauseSel = 0; updatePauseSel();
+      pauseSel = 0;
+      el('mi1').textContent = race.on ? 'RESTART RACE' : 'RESTART RUN';
+      updatePauseSel();
       setBodyState(S_PAUSE);
     }
   } else if (state === S_FINISH) {
     if (finishShowT > 0) finishShowT -= dt;
-    else if (edges.confirm) { startRun(); snapCameraBehind(); }
-    else if (edges.back) gotoTitle();
+    else if (e0.confirm) { startRun(); snapAllCams(); }
+    else if (e0.back) gotoTitle();
+  } else if (state === S_RESULTS) {
+    if (finishShowT > 0) finishShowT -= dt;
+    else if (e0.confirm || e1.confirm) { startRace(); snapAllCams(); }
+    else if (e0.back || e1.back) gotoSelect();
   }
   syncTelemetry(); // state changes surface immediately, even while frozen
 }
 
 /* ═════════════════ perf telemetry ═════════════════ */
-function perfTelemetry() {
-  const ri = renderer.info.render;
-  TL.perf.calls = ri.calls; TL.perf.tris = ri.triangles;
-  if (ri.calls > TL.perf.maxCalls) TL.perf.maxCalls = ri.calls;
-  if (ri.triangles > TL.perf.maxTris) TL.perf.maxTris = ri.triangles;
+function perfTelemetry(calls, tris) {
+  TL.perf.calls = calls; TL.perf.tris = tris;
+  if (calls > TL.perf.maxCalls) TL.perf.maxCalls = calls;
+  if (tris > TL.perf.maxTris) TL.perf.maxTris = tris;
   if (state === S_RUN) {
-    const s2 = clamp(lastGateIdx, 0, 3);
-    if (ri.calls > TL.perf.sectorCalls[s2]) TL.perf.sectorCalls[s2] = ri.calls;
-    if (ri.triangles > TL.perf.sectorTris[s2]) TL.perf.sectorTris[s2] = ri.triangles;
+    const s2 = clamp(players[0].gateIdx, 0, 3);
+    if (calls > TL.perf.sectorCalls[s2]) TL.perf.sectorCalls[s2] = calls;
+    if (tris > TL.perf.sectorTris[s2]) TL.perf.sectorTris[s2] = tris;
   }
 }
 
@@ -380,9 +545,32 @@ function fitStage() {
 window.addEventListener('resize', fitStage);
 fitStage();
 
-/* ?split2: perf probe for the planned 2P mode — renders the world TWICE
-   side-by-side through two cameras (the honest cost of vertical split
-   screen: 2× draw calls + vertex work, same total fill). Debug only. */
+/* ═════════ split rendering — the REAL 2P mode (scissor viewports) ═════════
+   Proven on the Pi by the ?split2 probe: two 640x720 passes, per-pass tile
+   culling, combined budget ≤110 calls / ≤120k tris. Per-pass visibility
+   handles per-player run state (each half sees its OWN snowman). */
+let frameCalls = 0, frameTris = 0;
+function renderRace() {
+  frameCalls = 0; frameTris = 0;
+  renderer.setScissorTest(true);
+  for (let i = 0; i < 2; i++) {
+    const pl = players[i];
+    const cam = i === 0 ? camera : cam2;
+    W.snowman.mesh.visible = !pl.smHit;
+    cullTilesFor(cam);
+    W.sky.position.copy(cam.position);
+    renderer.setViewport(i * (VW / 2), 0, VW / 2, VH);
+    renderer.setScissor(i * (VW / 2), 0, VW / 2, VH);
+    renderer.render(scene, cam);
+    frameCalls += renderer.info.render.calls;
+    frameTris += renderer.info.render.triangles;
+  }
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, VW, VH);
+}
+
+/* ?split2: kept as a plain perf probe — renders the world TWICE side-by-side
+   through two cameras in 1P, to measure the honest cost of the split. */
 const SPLIT2 = QS.get('split2') === '1';
 const cam2 = new THREE.PerspectiveCamera(63, (VW / 2) / VH, 0.3, 1500);
 if (SPLIT2) { camera.aspect = (VW / 2) / VH; camera.updateProjectionMatrix(); }
@@ -407,7 +595,7 @@ function frame(now) {
   gatherInput();
   menuLogic(dtReal);
   let n = 0;
-  if (state !== S_TITLE && state !== S_SELECT && state !== S_PAUSE) {
+  if (state !== S_TITLE && state !== S_SELECT && state !== S_PAUSE && state !== S_RESULTS) {
     if (TURBO > 0) {
       // test mode only: the harness may retune tick rate mid-session
       n = (typeof window.__ppTurbo === 'number') ? clamp(window.__ppTurbo, 1, 30) : TURBO;
@@ -423,9 +611,16 @@ function frame(now) {
   // and dropped frames don't stretch the chase-cam lag
   const dtVis = Math.max(dtReal, n * DT);
   updateVisuals(dtVis, now);
-  if (SPLIT2) renderSplitProbe();
-  else renderer.render(scene, camera);
-  perfTelemetry();
+  if (splitOn) {
+    renderRace();
+    perfTelemetry(frameCalls, frameTris);
+  } else if (SPLIT2) {
+    renderSplitProbe();
+    perfTelemetry(renderer.info.render.calls, renderer.info.render.triangles);
+  } else {
+    renderer.render(scene, camera);
+    perfTelemetry(renderer.info.render.calls, renderer.info.render.triangles);
+  }
   updateHUD();
 }
 

@@ -193,57 +193,84 @@ const sfx = {
   jingle: () => { [659, 880, 1046].forEach((f, i) => tone(f, 0.2, 'triangle', 0.07, null, i * 0.12)); },
   menuMove: () => tone(520, 0.05, 'square', 0.04),
   respawn: () => tone(330, 0.2, 'sine', 0.07, 660),
+  // race winner: a proper triumphant flourish — rising fourths into a held
+  // major chord with a bright shimmer. Confident, not clownish.
+  winFanfare: () => {
+    [392, 523, 659, 784].forEach((f, i) => tone(f, 0.20, 'triangle', 0.10, null, i * 0.12));
+    tone(1046, 0.7, 'triangle', 0.11, null, 0.52);
+    tone(659, 0.7, 'triangle', 0.07, null, 0.52);
+    tone(523, 0.7, 'triangle', 0.07, null, 0.52);
+    noiseHit(0.55, 0.05, 6000, 1800, 0.52);
+  },
 };
 
-/* ═════════════════ input — pad + keyboard + touch, unified ═════════════════ */
+/* ══════════ input — pad + keyboard + touch, routed per player ══════════
+   P1 = pad slot 0 (+ keyboard + touch in 1P). P2 (race mode) = pad slot 1,
+   or the keyboard when P1 is on a pad. One physical input never drives two
+   players: from join to un-join the keyboard belongs to P2 alone. */
 const AC = window.ArcadeController || null;
-const PAD0 = AC ? AC.pad(0) : null;
-const held = { kSteerL: false, kSteerR: false, kTuck: false, kBrake: false, tSteer: 0, tTuck: false, tBrake: false };
-const edges = { confirm: false, pause: false, up: false, down: false, left: false, right: false,
-                back: false, any: false, jump: false, selCard: -1 };
-let prevLy = 0, prevLx = 0, padLyRaw = 0;
-function clearEdges() {
-  edges.confirm = edges.pause = edges.up = edges.down = edges.left = edges.right =
-    edges.back = edges.any = edges.jump = false;
-  edges.selCard = -1;
+const PAD = [AC ? AC.pad(0) : null, AC ? AC.pad(1) : null];
+let padUsed = false;                 // pad0 activity seen → "P1 is on a pad"
+const kbHeld = { steerL: false, steerR: false, tuck: false, brake: false };
+const tHeld = { steer: 0, tuck: false, brake: false };
+function mkEdges() {
+  return { confirm: false, pause: false, up: false, down: false, left: false,
+           right: false, back: false, any: false, jump: false, selCard: -1 };
 }
-// filled every frame from all sources; sim reads these
-const inp = { steer: 0, steerTarget: 0, tuck: false, brake: false, trickX: 0, trickY: 0 };
+function clearEdgesObj(e) {
+  e.confirm = e.pause = e.up = e.down = e.left = e.right =
+    e.back = e.any = e.jump = false;
+  e.selCard = -1;
+}
+const kbE = mkEdges();               // keyboard edges (routed in gatherInput)
+const E = [mkEdges(), mkEdges()];    // per-player edges (touch feeds E[0])
+function clearEdges() { clearEdgesObj(E[0]); clearEdgesObj(E[1]); }
+
+/* race-HUD element refs (grabbed once at boot) */
+const rnumEl = [el('rnum0'), el('rnum1')];
+const rsecN = [el('rsecN0'), el('rsecN1')];
+const rgapEl = [el('rgap0'), el('rgap1')];
+const rtpEl = [el('rtp0'), el('rtp1')];
+const rbanEl = [el('rban0'), el('rban1')];
+const fadeHalfEl = [el('fadeHalf0'), el('fadeHalf1')];
+const p2PromptEl = el('p2Prompt');
+const profMarker2 = el('profMarker2');
 
 window.addEventListener('keydown', e => {
   const k = e.key;
   if (k.startsWith('Arrow') || k === ' ') e.preventDefault();
   ensureAudio();
   if (!e.repeat) {
-    edges.any = true;
+    kbE.any = true;
     if (k === 'Enter') {
-      if (state === S_RUN || state === S_COUNT) edges.pause = true; else edges.confirm = true;
+      if (state === S_RUN || state === S_COUNT) kbE.pause = true; else kbE.confirm = true;
     }
-    if (k === 'z' || k === 'Z') edges.confirm = true;
+    if (k === 'z' || k === 'Z') kbE.confirm = true;
     // Space & X: jump/trick in the run, confirm everywhere else
     if (k === ' ' || k === 'x' || k === 'X') {
-      if (state === S_RUN) edges.jump = true; else edges.confirm = true;
+      if (state === S_RUN) kbE.jump = true; else kbE.confirm = true;
     }
-    if (k === 'Escape' || k === 'p' || k === 'P') edges.pause = true;
-    if (k === 'ArrowUp' || k === 'w' || k === 'W') edges.up = true;
-    if (k === 'ArrowDown' || k === 's' || k === 'S') edges.down = true;
-    if (k === 'ArrowLeft' || k === 'a' || k === 'A') edges.left = true;
-    if (k === 'ArrowRight' || k === 'd' || k === 'D') edges.right = true;
-    if (k === 'Backspace') edges.back = true;
+    if (k === 'Escape' || k === 'p' || k === 'P') kbE.pause = true;
+    if (k === 'ArrowUp' || k === 'w' || k === 'W') kbE.up = true;
+    if (k === 'ArrowDown' || k === 's' || k === 'S') kbE.down = true;
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') kbE.left = true;
+    if (k === 'ArrowRight' || k === 'd' || k === 'D') kbE.right = true;
+    if (k === 'Backspace') kbE.back = true;
   }
-  if (k === 'ArrowLeft' || k === 'a' || k === 'A') held.kSteerL = true;
-  if (k === 'ArrowRight' || k === 'd' || k === 'D') held.kSteerR = true;
-  if (k === 'ArrowDown' || k === 'z' || k === 'Z') held.kTuck = true;
-  if (k === 'ArrowUp') held.kBrake = true;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') kbHeld.steerL = true;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') kbHeld.steerR = true;
+  if (k === 'ArrowDown' || k === 'z' || k === 'Z') kbHeld.tuck = true;
+  if (k === 'ArrowUp') kbHeld.brake = true;
 });
 window.addEventListener('keyup', e => {
   const k = e.key;
-  if (k === 'ArrowLeft' || k === 'a' || k === 'A') held.kSteerL = false;
-  if (k === 'ArrowRight' || k === 'd' || k === 'D') held.kSteerR = false;
-  if (k === 'ArrowDown' || k === 'z' || k === 'Z') held.kTuck = false;
-  if (k === 'ArrowUp') held.kBrake = false;
+  if (k === 'ArrowLeft' || k === 'a' || k === 'A') kbHeld.steerL = false;
+  if (k === 'ArrowRight' || k === 'd' || k === 'D') kbHeld.steerR = false;
+  if (k === 'ArrowDown' || k === 'z' || k === 'Z') kbHeld.tuck = false;
+  if (k === 'ArrowUp') kbHeld.brake = false;
 });
-// touch: screen halves steer, corner buttons tuck/brake; select cards tap
+// touch: screen halves steer, corner buttons tuck/brake; select cards tap.
+// Touch is always P1 — there is no 2P on touch.
 (function touchSetup() {
   const bind = (id, on, off) => {
     const n = el(id);
@@ -251,136 +278,230 @@ window.addEventListener('keyup', e => {
     n.addEventListener('touchend', e => { e.preventDefault(); off(); n.classList.remove('held'); }, { passive: false });
     n.addEventListener('touchcancel', () => { off(); n.classList.remove('held'); }, { passive: true });
   };
-  bind('tzoneL', () => { held.tSteer = -0.85; }, () => { if (held.tSteer < 0) held.tSteer = 0; });
-  bind('tzoneR', () => { held.tSteer = 0.85; }, () => { if (held.tSteer > 0) held.tSteer = 0; });
-  bind('tbtnTuck', () => { held.tTuck = true; }, () => { held.tTuck = false; });
-  bind('tbtnBrake', () => { held.tBrake = true; }, () => { held.tBrake = false; });
-  bind('tbtnJump', () => { edges.jump = true; }, () => {});
-  el('tbtnPause').addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); edges.pause = true; }, { passive: false });
+  bind('tzoneL', () => { tHeld.steer = -0.85; }, () => { if (tHeld.steer < 0) tHeld.steer = 0; });
+  bind('tzoneR', () => { tHeld.steer = 0.85; }, () => { if (tHeld.steer > 0) tHeld.steer = 0; });
+  bind('tbtnTuck', () => { tHeld.tuck = true; }, () => { tHeld.tuck = false; });
+  bind('tbtnBrake', () => { tHeld.brake = true; }, () => { tHeld.brake = false; });
+  bind('tbtnJump', () => { E[0].jump = true; }, () => {});
+  el('tbtnPause').addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); E[0].pause = true; }, { passive: false });
   // mountain cards: tap selects, tap again confirms
   for (const i of [0, 1]) {
     el('mcard' + i).addEventListener('touchstart', e => {
       e.preventDefault(); ensureAudio();
-      if (state === S_SELECT) edges.selCard = i;
+      if (state === S_SELECT) E[0].selCard = i;
     }, { passive: false });
   }
   // tap anywhere = confirm on title/finish; fallback input-touch class if the
   // controller lib didn't load (it normally handles the body class)
   window.addEventListener('touchstart', () => {
     if (!AC && document.body) document.body.classList.add('input-touch');
-    if (state === S_TITLE || state === S_FINISH) { edges.confirm = true; edges.any = true; }
+    if (state === S_TITLE || state === S_FINISH) { E[0].confirm = true; E[0].any = true; }
   }, { capture: true, passive: true });
 })();
 if (AC) {
   AC.on('press', e => {
     // never bind home or select — the console shell owns them
-    if (e.padIndex !== 0 || e.button === 'home' || e.button === 'select') return;
+    if (e.button === 'home' || e.button === 'select') return;
+    if (e.padIndex !== 0 && e.padIndex !== 1) return;
     ensureAudio();
-    edges.any = true;
+    E[e.padIndex].any = true;
   });
 }
-function pollPad() {
-  if (!PAD0 || !PAD0.connected) { padLyRaw = 0; return 0; }
-  let steer = PAD0.axis('lx');
-  if (PAD0.button('left')) steer -= 1;
-  if (PAD0.button('right')) steer += 1;
-  if (PAD0.justPressed('south')) edges.confirm = true;
-  if (PAD0.justPressed('east')) edges.back = true;
-  if (PAD0.justPressed('west')) edges.jump = true;
-  if (PAD0.justPressed('start')) edges.pause = true;
-  if (PAD0.justPressed('up')) edges.up = true;
-  if (PAD0.justPressed('down')) edges.down = true;
-  if (PAD0.justPressed('left')) edges.left = true;
-  if (PAD0.justPressed('right')) edges.right = true;
-  const ly = PAD0.axis('ly');
-  if (ly < -0.6 && prevLy >= -0.6) edges.up = true;
-  if (ly > 0.6 && prevLy <= 0.6) edges.down = true;
-  prevLy = ly;
-  padLyRaw = ly;
-  const lx = PAD0.axis('lx');
-  if (lx < -0.6 && prevLx >= -0.6) edges.left = true;
-  if (lx > 0.6 && prevLx <= 0.6) edges.right = true;
-  prevLx = lx;
-  return steer;
-}
-function gatherInput() {
-  const padSteer = pollPad();
-  let t = padSteer + held.tSteer + (held.kSteerL ? -1 : 0) + (held.kSteerR ? 1 : 0);
-  // RAW stick direction — the trick chooser reads the player's actual push
-  // (left = spin left) before the screen-direction negation below
-  inp.trickX = clamp(t, -1, 1);
-  let ty = padLyRaw + (held.kBrake ? -1 : 0) +
-    ((PAD0 && PAD0.connected && PAD0.button('up')) ? -1 : 0);
-  inp.trickY = clamp(ty, -1, 1);
-  // Screen-direction fix: the camera rides behind the skier and in this
-  // right-handed y-up world +heading turns toward screen-LEFT — so the raw
-  // input (+1 = player pushed right) is negated ONCE here at the source.
-  // Turn, lean and spray all mirror together and stay mutually consistent.
-  inp.steerTarget = clamp(-t, -1, 1);
-  inp.tuck = held.kTuck || held.tTuck || !!(PAD0 && PAD0.connected && PAD0.button('south'));
-  inp.brake = held.kBrake || held.tBrake || !!(PAD0 && PAD0.connected && PAD0.button('east'));
-}
 
-/* ═════════════════ game state + physics ═════════════════ */
-const S_TITLE = 'title', S_SELECT = 'select', S_COUNT = 'countdown', S_RUN = 'run', S_PAUSE = 'pause', S_FINISH = 'finish';
+/* ═════════════════ game state ═════════════════ */
+const S_TITLE = 'title', S_SELECT = 'select', S_COUNT = 'countdown', S_RUN = 'run',
+      S_PAUSE = 'pause', S_FINISH = 'finish', S_RESULTS = 'results';
 let state = S_TITLE;
 let TICK = 0;
+
+/* 2P race bookkeeping. joined persists across races (rematch / re-select);
+   on is true only while the split itself is live. */
+const race = { joined: false, on: false, p2src: '', winner: -1, resultsT: 0, prompt: false };
+// quiet rubber-band mercy: the player trailing by course distance gets a
+// little extra tuck acceleration — 0 at 15 m behind, full +4% at 60 m+.
+const RB_NEAR = 15, RB_FAR = 60, RB_MAX = 0.04;
 
 /* trick catalogue — chosen by the stick at the moment west is pressed */
 const TK_BACK = 0, TK_SPIN_L = 1, TK_SPIN_R = 2, TK_FRONT = 3;
 const TRICK_NAMES = ['BACKFLIP', '360 L', '360 R', 'FRONT FLIP'];
 const TRICK_DISP = ['FLIP', '360', '360', 'F-FLIP'];
 
-const P = {
-  x: 0, y: 0, z: 0, heading: 0, v: 0, vy: 0,
-  air: false, crashT: 0, wobbleT: 0, invulnT: 0, stuckT: 0,
-  curI: 2, s: 0, u: 0, grade: 0, latSlope: 0,
-  launchHeading: 0, groundVy: 0,
-  trickT: 0, trickType: 0, airN: 0, hopAir: false,
-};
-P.airTypes = new Int8Array(8);          // completed tricks THIS air
-let lastGateIdx = 0;           // 0=start, 1..3 gates
-let timerStartTick = -1, finalTime = 0, runTime = 0;
-let sectorStartTime = 0;
-let curSectors = [0, 0, 0, 0];
+/* one full independent sim state per player — position, air, tricks, crash,
+   checkpoints, sectors, chase-cam state. Preallocated at boot. */
+function mkPlayer(idx) {
+  return {
+    idx,
+    x: 0, y: 0, z: 0, heading: 0, v: 0, vy: 0,
+    air: false, crashT: 0, wobbleT: 0, invulnT: 0, stuckT: 0,
+    curI: 2, s: 0, u: 0, grade: 0, latSlope: 0,
+    launchHeading: 0, groundVy: 0,
+    trickT: 0, trickType: 0, airN: 0, hopAir: false,
+    airTypes: new Int8Array(8),         // completed tricks THIS air
+    inp: { steer: 0, steerTarget: 0, tuck: false, brake: false, trickX: 0, trickY: 0 },
+    gateIdx: 0,                         // 0=start, 1..3 gates
+    runTime: 0, finalTime: 0, finished: false,
+    sectorStartTime: 0, curSectors: [0, 0, 0, 0],
+    trickName: '', boostPct: 0, smHit: false, rbMult: 1,
+    fadeT: 0, fadeEl: null,
+    cam: { pos: new THREE.Vector3(0, 30, -40), look: new THREE.Vector3(0, 0, 0),
+           dirx: 0, dirz: 1, fov: 63 },
+  };
+}
+const players = [mkPlayer(0), mkPlayer(1)];
+
+/* pad polling — one raw channel per pad slot, edge + held state */
+const padPrevLy = [0, 0], padPrevLx = [0, 0];
+const padSteer = [0, 0], padLy = [0, 0];
+const padHeld = [{ tuck: false, brake: false, up: false },
+                 { tuck: false, brake: false, up: false }];
+function pollPad(i) {
+  const p = PAD[i], e = E[i], h = padHeld[i];
+  if (!p || !p.connected) {
+    padSteer[i] = 0; padLy[i] = 0;
+    h.tuck = h.brake = h.up = false;
+    padPrevLy[i] = 0; padPrevLx[i] = 0;
+    return;
+  }
+  let steer = p.axis('lx');
+  if (p.button('left')) steer -= 1;
+  if (p.button('right')) steer += 1;
+  if (p.justPressed('south')) e.confirm = true;
+  if (p.justPressed('east')) e.back = true;
+  if (p.justPressed('west')) e.jump = true;
+  if (p.justPressed('start')) e.pause = true;
+  if (p.justPressed('up')) e.up = true;
+  if (p.justPressed('down')) e.down = true;
+  if (p.justPressed('left')) e.left = true;
+  if (p.justPressed('right')) e.right = true;
+  const ly = p.axis('ly');
+  if (ly < -0.6 && padPrevLy[i] >= -0.6) e.up = true;
+  if (ly > 0.6 && padPrevLy[i] <= 0.6) e.down = true;
+  padPrevLy[i] = ly;
+  const lx = p.axis('lx');
+  if (lx < -0.6 && padPrevLx[i] >= -0.6) e.left = true;
+  if (lx > 0.6 && padPrevLx[i] <= 0.6) e.right = true;
+  padPrevLx[i] = lx;
+  padSteer[i] = steer; padLy[i] = ly;
+  h.tuck = p.button('south'); h.brake = p.button('east'); h.up = p.button('up');
+  if (i === 0 && !padUsed &&
+      (steer !== 0 || ly !== 0 || e.confirm || e.back || e.jump || e.pause ||
+       e.up || e.down || e.left || e.right)) padUsed = true;
+}
+function buildInp(pl, pSteer, pLy, pHeld, useKb, useTouch) {
+  const inp = pl.inp;
+  let t = pSteer + (useTouch ? tHeld.steer : 0)
+    + (useKb ? (kbHeld.steerL ? -1 : 0) + (kbHeld.steerR ? 1 : 0) : 0);
+  // RAW stick direction — the trick chooser reads the player's actual push
+  // (left = spin left) before the screen-direction negation below
+  inp.trickX = clamp(t, -1, 1);
+  let ty = pLy + (useKb && kbHeld.brake ? -1 : 0) + (pHeld.up ? -1 : 0);
+  inp.trickY = clamp(ty, -1, 1);
+  // Screen-direction fix: the camera rides behind the skier and in this
+  // right-handed y-up world +heading turns toward screen-LEFT — so the raw
+  // input (+1 = player pushed right) is negated ONCE here at the source.
+  inp.steerTarget = clamp(-t, -1, 1);
+  inp.tuck = (useKb && kbHeld.tuck) || (useTouch && tHeld.tuck) || pHeld.tuck;
+  inp.brake = (useKb && kbHeld.brake) || (useTouch && tHeld.brake) || pHeld.brake;
+}
+function gatherInput() {
+  pollPad(0); pollPad(1);
+  // keyboard-join is intercepted at the routing layer so the same ✕ press
+  // can never ALSO confirm the mountain for P1
+  if (state === S_SELECT && !race.joined && kbE.confirm && padUsed &&
+      PAD[0] && PAD[0].connected) {
+    kbE.confirm = false;
+    joinP2('kbd');
+  }
+  // keyboard edges/held route to P2 from join to un-join, else to P1
+  const kbT = (race.joined && race.p2src === 'kbd') ? 1 : 0;
+  const t = E[kbT];
+  if (kbE.confirm) t.confirm = true;
+  if (kbE.pause) t.pause = true;
+  if (kbE.up) t.up = true;
+  if (kbE.down) t.down = true;
+  if (kbE.left) t.left = true;
+  if (kbE.right) t.right = true;
+  if (kbE.back) t.back = true;
+  if (kbE.any) t.any = true;
+  if (kbE.jump) t.jump = true;
+  clearEdgesObj(kbE);
+  buildInp(players[0], padSteer[0], padLy[0], padHeld[0], kbT === 0, true);
+  buildInp(players[1], padSteer[1], padLy[1], padHeld[1], kbT === 1, false);
+}
+
+/* shared run/menu bookkeeping */
+let timerStartTick = -1;
 let cdT = 0, cdShown = -1;
 let finishShowT = 0;
 let pauseSel = 0, pausedFrom = S_RUN;
 let selectSel = 0;
-let respawnFadeT = 0;
-let lastTrickName = '';        // telemetry: most recent trick started
-let lastBoostPct = 0;          // telemetry: landing boost % of last landing
-let smHitThisRun = false;      // telemetry: snowman poofed this run
 
 function setBodyState(s2) {
   const cls = document.body.classList;
-  cls.remove('st-title', 'st-select', 'st-count', 'st-run', 'st-pause', 'st-finish');
+  cls.remove('st-title', 'st-select', 'st-count', 'st-run', 'st-pause', 'st-finish', 'st-results');
   cls.add('st-' + (s2 === S_COUNT ? 'count' : s2));
 }
 
-function placeAtSample(i) {
-  P.curI = i;
-  P.x = CX[i]; P.z = CZ[i];
-  P.heading = Math.atan2(CDX[i], CDZ[i]);
-  P.y = terrainH(P.x, P.z);
-  P.vy = 0; P.air = false; P.crashT = 0; P.wobbleT = 0;
-  P.trickT = 0; P.airN = 0; P.hopAir = false;
-  P.s = i * STEP;
+/* split rendering on/off — aspect, P2 rig, body.race HUD mode */
+let splitOn = false;
+function setSplit(on) {
+  if (splitOn === on) return;
+  splitOn = on;
+  document.body.classList.toggle('race', on);
+  rigs[1].group.visible = on;
+  rigs[1].blobShadow.visible = on;
+  const asp = (on || SPLIT2) ? (VW / 2) / VH : VW / VH;
+  camera.aspect = asp; camera.updateProjectionMatrix();
+  cam2.aspect = asp; cam2.updateProjectionMatrix();
+  if (!on) renderer.setViewport(0, 0, VW, VH);
+}
+
+function joinP2(src) {
+  if (race.joined) return;
+  race.joined = true; race.p2src = src;
+  document.body.classList.add('p2joined');
+  sfx.jingle();
+}
+function unjoinP2() {
+  if (!race.joined) return;
+  race.joined = false; race.p2src = '';
+  document.body.classList.remove('p2joined');
+  sfx.menuMove();
+}
+
+function placeAtSample(pl, i) {
+  pl.curI = i;
+  pl.x = CX[i]; pl.z = CZ[i];
+  pl.heading = Math.atan2(CDX[i], CDZ[i]);
+  pl.y = terrainH(pl.x, pl.z);
+  pl.vy = 0; pl.air = false; pl.crashT = 0; pl.wobbleT = 0;
+  pl.trickT = 0; pl.airN = 0; pl.hopAir = false;
+  pl.s = i * STEP;
+}
+function offsetLane(pl, u) {
+  pl.x += CRX[2] * u; pl.z += CRZ[2] * u;
+  pl.y = terrainH(pl.x, pl.z);
+}
+function resetPlayerRun(pl) {
+  placeAtSample(pl, 2);
+  pl.v = 0; pl.invulnT = 0; pl.stuckT = 0;
+  pl.gateIdx = 0;
+  pl.runTime = 0; pl.finalTime = 0; pl.finished = false;
+  pl.sectorStartTime = 0;
+  pl.curSectors[0] = pl.curSectors[1] = pl.curSectors[2] = pl.curSectors[3] = 0;
+  pl.trickName = ''; pl.boostPct = 0; pl.smHit = false; pl.rbMult = 1;
+  pl.inp.steer = 0;
 }
 function startRun() {
-  placeAtSample(2);
-  P.v = 0; P.invulnT = 0; P.stuckT = 0;
-  lastGateIdx = 0;
-  timerStartTick = -1; runTime = 0; finalTime = 0;
-  sectorStartTime = 0;
-  curSectors = [0, 0, 0, 0];
+  setSplit(false);
+  race.on = false; race.winner = -1;
+  resetPlayerRun(players[0]);
+  timerStartTick = -1;
   cdT = 1.9; cdShown = -1;
-  lastTrickName = ''; lastBoostPct = 0; smHitThisRun = false;
   state = S_COUNT;
   setBodyState(S_COUNT);
   countdownEl.style.display = 'block';
   sectorNum.textContent = '1';
-  inp.steer = 0;
   // the snowman is back on its feet every run
   W.snowman.hit = false;
   W.snowman.mesh.visible = true;
@@ -388,57 +509,87 @@ function startRun() {
   W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
   try { localStorage.setItem(MTN_KEY, W.cfg.id); } catch (e) {}
 }
+function startRace() {
+  setSplit(true);
+  race.on = true; race.winner = -1; race.resultsT = 0;
+  resetPlayerRun(players[0]);
+  resetPlayerRun(players[1]);
+  // side-by-side lanes at the gate
+  offsetLane(players[0], -2.2);
+  offsetLane(players[1], 2.2);
+  rbanEl[0].classList.remove('show'); rbanEl[1].classList.remove('show');
+  rsecN[0].textContent = '1'; rsecN[1].textContent = '1';
+  resetRaceHudCache();
+  timerStartTick = -1;
+  cdT = 1.9; cdShown = -1;
+  state = S_COUNT;
+  setBodyState(S_COUNT);
+  countdownEl.style.display = 'block';
+  W.snowman.hit = false;
+  W.snowman.mesh.visible = true;
+  W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
+  // split perf budgets are asserted over split frames only
+  TL.perf.maxCalls = 0; TL.perf.maxTris = 0;
+  for (let k = 0; k < 4; k++) { TL.perf.sectorCalls[k] = 0; TL.perf.sectorTris[k] = 0; }
+  try { localStorage.setItem(MTN_KEY, W.cfg.id); } catch (e) {}
+}
 function gotoTitle() {
+  unjoinP2();
+  setSplit(false);
+  race.on = false; race.winner = -1; race.prompt = false;
   state = S_TITLE;
   setBodyState(S_TITLE);
   countdownEl.style.display = 'none';
   titleBest.textContent = best ? (W.cfg.name + ' BEST ' + fmtTime(best.time)) : '';
 }
-function respawnAtCheckpoint(fade) {
-  const i = lastGateIdx === 0 ? 3 : GATES[lastGateIdx - 1];
-  placeAtSample(i);
-  P.v = 6; P.invulnT = 1.0; P.stuckT = 0;
+function respawnAtCheckpoint(pl, fade) {
+  const i = pl.gateIdx === 0 ? 3 : GATES[pl.gateIdx - 1];
+  placeAtSample(pl, i);
+  pl.v = 6; pl.invulnT = 1.0; pl.stuckT = 0;
   if (fade) {
-    fadeWhite.style.opacity = '0.9';
-    respawnFadeT = 0.05;
+    pl.fadeEl = race.on ? fadeHalfEl[pl.idx] : fadeWhite;
+    pl.fadeEl.style.opacity = '0.9';
+    pl.fadeT = 0.05;
   }
   sfx.respawn();
 }
-function startCrash() {
-  P.crashT = 1.2;
-  P.air = false;
-  P.trickT = 0; P.airN = 0; P.hopAir = false;
+function startCrash(pl) {
+  pl.crashT = 1.2;
+  pl.air = false;
+  pl.trickT = 0; pl.airN = 0; pl.hopAir = false;
   sfx.crash();
-  if (window.ArcadeController) ArcadeController.rumble(0, { duration: 450, strong: 0.9, weak: 0.6 });
-  spawnSpray(P.x, P.y + 0.5, P.z,
-    -Math.sin(P.heading) * P.v * 0.25, 2.5, -Math.cos(P.heading) * P.v * 0.25, 4.5, 60);
+  if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 450, strong: 0.9, weak: 0.6 });
+  spawnSpray(pl.x, pl.y + 0.5, pl.z,
+    -Math.sin(pl.heading) * pl.v * 0.25, 2.5, -Math.cos(pl.heading) * pl.v * 0.25, 4.5, 60);
 }
 
-function finishRun() {
-  finalTime = runTime;
-  curSectors[3] = finalTime - sectorStartTime;
+function finishRun() {           // 1P finish — medals, bests, splits table
+  const pl = players[0];
+  pl.finished = true;
+  pl.finalTime = pl.runTime;
+  pl.curSectors[3] = pl.finalTime - pl.sectorStartTime;
   state = S_FINISH;
   finishShowT = 0.9;
   sfx.fanfare();
   flash('FINISH', '#ffd23e');
-  const medal = medalFor(finalTime, MEDALS);
-  const isBest = !best || finalTime < best.time;
+  const medal = medalFor(pl.finalTime, MEDALS);
+  const isBest = !best || pl.finalTime < best.time;
   const prevBest = best;
   if (isBest) {
-    best = { time: finalTime, sectors: curSectors.slice() };
+    best = { time: pl.finalTime, sectors: pl.curSectors.slice() };
     W.best = best;
     try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {}
   }
   const ml = el('medalLine');
   ml.textContent = medal ? (medal + ' MEDAL') : 'FINISHER';
   ml.className = medal.toLowerCase();
-  el('finalTime').textContent = fmtTime(finalTime);
+  el('finalTime').textContent = fmtTime(pl.finalTime);
   el('newBest').textContent = isBest ? 'NEW BEST TIME!' : (prevBest ? 'BEST ' + fmtTime(prevBest.time) : '');
   let rows = '';
   for (let k = 0; k < 4; k++) {
     const ref = prevBest && prevBest.sectors ? prevBest.sectors[k] : null;
-    const d = ref != null ? curSectors[k] - ref : null;
-    rows += '<tr><td>SECTOR ' + (k + 1) + '</td><td>' + fmtTime(curSectors[k]) + '</td><td class="d ' +
+    const d = ref != null ? pl.curSectors[k] - ref : null;
+    rows += '<tr><td>SECTOR ' + (k + 1) + '</td><td>' + fmtTime(pl.curSectors[k]) + '</td><td class="d ' +
       (d == null ? '' : d <= 0 ? 'good' : 'bad') + '">' + (d == null ? '' : fmtDelta(d)) + '</td></tr>';
   }
   el('splitTable').innerHTML = rows;
@@ -446,48 +597,90 @@ function finishRun() {
   setBodyState(S_FINISH);
 }
 
-function passGate(n) { // n = 1..3
-  lastGateIdx = n;
-  const sec = runTime - sectorStartTime;
-  curSectors[n - 1] = sec;
-  sectorStartTime = runTime;
-  const ref = best && best.sectors ? best.sectors[n - 1] : null;
-  if (ref != null) {
-    const d = sec - ref;
-    splitPop(fmtDelta(d), d <= 0 ? 'good' : 'bad');
+/* race finishes — first across wins; NOTHING here touches 1P bests */
+function racePlayerFinish(pl) {
+  pl.finished = true;
+  pl.finalTime = pl.runTime;
+  pl.curSectors[3] = pl.finalTime - pl.sectorStartTime;
+  if (race.winner < 0) {
+    race.winner = pl.idx;
+    const b = rbanEl[1 - pl.idx];      // banner on the OTHER player's half
+    b.textContent = 'P' + (pl.idx + 1) + ' FINISHED!';
+    b.classList.add('show');
+    sfx.fanfare();
   } else {
-    splitPop(fmtTime(sec), 'neutral');
+    race.resultsT = 1.2;               // let the loser roll under the arch
   }
-  flash('CHECKPOINT', '#7de8e0');
-  sectorNum.textContent = String(n + 1);
+  if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 300, strong: 0.5, weak: 0.6 });
+}
+function showRaceResults() {
+  state = S_RESULTS;
+  setBodyState(S_RESULTS);
+  finishShowT = 0.9;
+  rbanEl[0].classList.remove('show'); rbanEl[1].classList.remove('show');
+  const w = race.winner;
+  const rw = el('rrWinner');
+  rw.textContent = 'P' + (w + 1) + ' WINS!';
+  rw.className = w === 0 ? 'p1' : 'p2';
+  el('rrT0').textContent = fmtTime(players[0].finalTime);
+  el('rrT1').textContent = fmtTime(players[1].finalTime);
+  let rows = '<tr class="h"><td></td><td>S1</td><td>S2</td><td>S3</td><td>S4</td></tr>';
+  for (let pi = 0; pi < 2; pi++) {
+    const pl = players[pi];
+    rows += '<tr><td class="' + (pi === 0 ? 'c1' : 'c2') + '">P' + (pi + 1) + '</td>';
+    for (let k = 0; k < 4; k++) rows += '<td>' + pl.curSectors[k].toFixed(1) + '</td>';
+    rows += '</tr>';
+  }
+  el('rrSplits').innerHTML = rows;
+  sfx.winFanfare();
+}
+
+function passGate(pl, n) { // n = 1..3
+  pl.gateIdx = n;
+  const sec = pl.runTime - pl.sectorStartTime;
+  pl.curSectors[n - 1] = sec;
+  pl.sectorStartTime = pl.runTime;
+  if (!race.on) {
+    const ref = best && best.sectors ? best.sectors[n - 1] : null;
+    if (ref != null) {
+      const d = sec - ref;
+      splitPop(fmtDelta(d), d <= 0 ? 'good' : 'bad');
+    } else {
+      splitPop(fmtTime(sec), 'neutral');
+    }
+    flash('CHECKPOINT', '#7de8e0');
+    sectorNum.textContent = String(n + 1);
+  } else {
+    rsecN[pl.idx].textContent = String(n + 1);
+  }
   sfx.chime();
 }
 
 /* obstacle collision — CSR query, zero allocation */
-function collideObstacles() {
+function collideObstacles(pl) {
   const o2 = OBS;
-  const cx0 = clamp(Math.floor((P.x - o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
-  const cx1 = clamp(Math.floor((P.x + o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
-  const cz0 = clamp(Math.floor((P.z - o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
-  const cz1 = clamp(Math.floor((P.z + o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
+  const cx0 = clamp(Math.floor((pl.x - o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
+  const cx1 = clamp(Math.floor((pl.x + o2.CELL - o2.X0) / o2.CELL), 0, o2.W - 1);
+  const cz0 = clamp(Math.floor((pl.z - o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
+  const cz1 = clamp(Math.floor((pl.z + o2.CELL - o2.Z0) / o2.CELL), 0, o2.H - 1);
   for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
     const c = cz * o2.W + cx;
     for (let k = o2.start[c]; k < o2.start[c + 1]; k++) {
       const o = o2.items[k];
-      const dx = P.x - o2.X[o], dz = P.z - o2.Z[o];
+      const dx = pl.x - o2.X[o], dz = pl.z - o2.Z[o];
       const rr = o2.R[o] + 0.45;
       const d2 = dx * dx + dz * dz;
       if (d2 >= rr * rr) continue;
       const d = Math.sqrt(d2) || 0.01;
       // push out of the trunk either way
-      P.x = o2.X[o] + dx / d * rr;
-      P.z = o2.Z[o] + dz / d * rr;
-      if (P.v > 11) { startCrash(); return true; }
+      pl.x = o2.X[o] + dx / d * rr;
+      pl.z = o2.Z[o] + dz / d * rr;
+      if (pl.v > 11) { startCrash(pl); return true; }
       // low-speed glance: wobble + scrub, keep skiing
-      P.v *= 0.55;
-      P.wobbleT = 0.8;
+      pl.v *= 0.55;
+      pl.wobbleT = 0.8;
       sfx.glance();
-      if (window.ArcadeController) ArcadeController.rumble(0, { duration: 130, strong: 0.4, weak: 0.3 });
+      if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 130, strong: 0.4, weak: 0.3 });
       return false;
     }
   }
@@ -497,307 +690,35 @@ function collideObstacles() {
 const wrapAngle = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
 
 // landing-boost chain text: "FLIP!", "FLIP + 360 · x2 BOOST · VARIETY!"
-function chainText(n, variety) {
-  let t = TRICK_DISP[P.airTypes[0]];
-  for (let i = 1; i < n; i++) t += ' + ' + TRICK_DISP[P.airTypes[i]];
+function chainText(pl, n, variety) {
+  let t = TRICK_DISP[pl.airTypes[0]];
+  for (let i = 1; i < n; i++) t += ' + ' + TRICK_DISP[pl.airTypes[i]];
   t += n === 1 ? '!' : ' · x' + n + ' BOOST';
   if (variety) t += ' · VARIETY!';
   return t;
 }
+function showTrickPopFor(pl, text) {
+  if (!race.on) { showTrickPop(text); return; }
+  const p = rtpEl[pl.idx];
+  p.textContent = text;
+  p.classList.remove('show');
+  void p.offsetWidth;
+  p.classList.add('show');
+}
 
-function tickSim() {
-  if (state === S_TITLE || state === S_SELECT || state === S_PAUSE) return;
-  TICK++;
-  if (state === S_COUNT) {
-    cdT -= DT;
-    const n = Math.max(0, Math.ceil(cdT / 0.6));
-    if (n !== cdShown) {
-      cdShown = n;
-      countdownEl.textContent = n > 0 ? String(n) : '';
-      if (n > 0) sfx.count(n);
-    }
-    if (cdT <= 0) {
-      state = S_RUN;
-      setBodyState(S_RUN);
-      countdownEl.style.display = 'none';
-      timerStartTick = TICK;
-      P.v = 3;                       // the push out of the start gate
-      flash('GO!', '#63e58b');
-      sfx.go();
-    }
-    syncTelemetry();
-    return;
-  }
-  if (timerStartTick >= 0 && state === S_RUN) runTime = (TICK - timerStartTick) * DT;
+/* rubber-band mercy — computed once per tick from course distance */
+function updateRubberBand() {
+  const a = players[0], b = players[1];
+  const lead = a.s >= b.s ? a : b;
+  const trail = lead === a ? b : a;
+  const gap = lead.s - trail.s;
+  const t = clamp((gap - RB_NEAR) / (RB_FAR - RB_NEAR), 0, 1);
+  lead.rbMult = 1;
+  trail.rbMult = 1 + RB_MAX * t;
+}
 
-  /* crash tumble: slide, decay, then respawn at the checkpoint */
-  if (P.crashT > 0) {
-    P.crashT -= DT;
-    P.v = Math.max(0, P.v - 14 * DT);
-    P.x += Math.sin(P.heading) * P.v * DT;
-    P.z += Math.cos(P.heading) * P.v * DT;
-    P.y = terrainH(P.x, P.z);
-    if (P.crashT <= 0) respawnAtCheckpoint(true);
-    syncTelemetry();
-    return;
-  }
-
-  /* steering (smoothed toward the summed target) */
-  const wobble = P.wobbleT > 0;
-  if (P.wobbleT > 0) P.wobbleT -= DT;
-  if (P.invulnT > 0) P.invulnT -= DT;
-  inp.steer += clamp(inp.steerTarget - inp.steer, -8 * DT, 8 * DT);
-  let steer = inp.steer * (wobble ? 0.4 : 1);
-  const finishing = state === S_FINISH;
-  if (finishing) steer = 0;
-
-  /* jump & air tricks (west button / space / X / touch JUMP).
-     Mid-air, the stick at the moment of the press picks the trick:
-     neutral = BACKFLIP · left = 360 L · right = 360 R · fwd = FRONT FLIP */
-  if (edges.jump && !finishing && state === S_RUN) {
-    if (!P.air) {
-      edges.jump = false;                 // consume: one press = one hop
-      // timed jump at a ramp lip out-launches the auto-launch
-      let ramped = false;
-      for (let ri = 0; ri < RAMPS.length; ri++) {
-        const l = RAMPS[ri];
-        if (P.curI >= l - 6 && P.curI <= l + 1) { ramped = true; break; }
-      }
-      P.air = true;
-      P.vy = ramped ? clamp(P.v * RAMP_JUMP_VY[2], RAMP_JUMP_VY[0], RAMP_JUMP_VY[1]) : HOP_VY;
-      P.launchHeading = P.heading;
-      P.hopAir = !ramped;                 // plain hops don't earn the landing boost
-      sfx.whoosh();
-      if (window.ArcadeController) ArcadeController.rumble(0, { duration: 70, strong: 0.15, weak: 0.3 });
-    } else if (P.trickT <= 0) {
-      edges.jump = false;                 // consume: one press = one trick
-      P.trickT = TRICK_TIME;
-      P.trickType = inp.trickY < -0.45 ? TK_FRONT
-        : inp.trickX < -0.45 ? TK_SPIN_L
-        : inp.trickX > 0.45 ? TK_SPIN_R : TK_BACK;
-      lastTrickName = TRICK_NAMES[P.trickType];
-      sfx.trick();
-      if (window.ArcadeController) ArcadeController.rumble(0, { duration: 110, strong: 0.25, weak: 0.45 });
-    }
-  }
-
-  const tuck = !finishing && inp.tuck && !P.air;
-  const brake = finishing || (inp.brake && !P.air);
-
-  const turnRate = steer * (2.7 / (1 + P.v / 22)) * (tuck ? 0.55 : 1) * (P.air ? 0.25 : 1)
-    * clamp(P.v / 3, 0.35, 1);      // skis can't pivot in place
-  P.heading += turnRate * DT;
-  if (wobble) P.heading += Math.sin(TICK * 0.5) * 0.010 * Math.min(1, P.wobbleT);
-
-  const dirx = Math.sin(P.heading), dirz = Math.cos(P.heading);
-
-  if (!P.air) {
-    const g = terrainGrad(P.x, P.z);
-    const slopeAlong = g.x * dirx + g.z * dirz;   // + = uphill ahead
-    P.grade = slopeAlong;
-    P.latSlope = g.x * dirz - g.z * dirx;
-    // accelerate down the fall line component we're pointed along
-    P.v += (-slopeAlong) * 9.81 * DT;
-    // drags: air (tuck helps), rolling, carving scrub, brake, deep snow —
-    // all mountain-tuned (NIGHT RIDGE ice scrubs less, runs faster)
-    const cd = tuck ? MP.cdTuck : MP.cdRun;
-    if (tuck) P.v += MP.tuckAccel * DT;   // pumping into the tuck: instant bite
-    P.v -= cd * P.v * P.v * DT;
-    P.v -= 0.010 * 9.81 * DT;
-    P.v -= Math.abs(turnRate) * P.v * MP.carve * DT;
-    if (brake) P.v -= MP.brake * DT;
-    const du = Math.abs(P.u) - CW[P.curI];
-    if (du > 1) {
-      const deep = Math.min(1, (du - 1) / 4);
-      P.v -= deep * (0.10 * 9.81 + 0.02 * P.v * P.v) * DT;
-    }
-    if (P.v < 0) P.v = 0;
-  } else {
-    P.vy -= 9.81 * 1.15 * DT;
-  }
-
-  /* advance */
-  P.x += dirx * P.v * DT;
-  P.z += dirz * P.v * DT;
-  const h = terrainInfo(P.x, P.z);
-  const hNow = h.h;
-  P.u = h.u;
-  const domI = h.i >= 0 ? h.i : P.curI;
-
-  if (!P.air) {
-    const dy = hNow - P.y;
-    if (dy < -0.30 && P.v > 8) {
-      // ground fell away — we're flying
-      P.air = true;
-      P.vy = Math.max(P.groundVy, -2);
-      P.launchHeading = P.heading;
-      sfx.whoosh();
-    } else {
-      P.groundVy = dy / DT;
-      P.y = hNow;
-    }
-  }
-  if (P.air) {
-    P.y += P.vy * DT;
-    if (P.trickT > 0) {                   // spin the trick out mid-air
-      P.trickT -= DT;
-      if (P.trickT <= 0) {
-        P.trickT = 0;
-        if (P.airN < 8) P.airTypes[P.airN] = P.trickType;
-        P.airN++;
-        sfx.trickDone();
-      }
-    }
-    if (P.y <= hNow) {
-      P.y = hNow;
-      P.air = false;
-      P.groundVy = 0;
-      const dphi = Math.abs(wrapAngle(P.heading - P.launchHeading));
-      spawnSpray(P.x, P.y + 0.2, P.z, 0, 1.5, 0, 3.5, 26);
-      const midTrick = P.trickT > 0;
-      const nTr = Math.min(P.airN, 8);
-      P.trickT = 0; P.airN = 0;
-      if (midTrick) {
-        // kid mercy rule: an unfinished trick is a wobble, NEVER a crash
-        P.v *= 0.94;
-        P.wobbleT = Math.max(P.wobbleT, 0.9);
-        lastBoostPct = 0;
-        sfx.landHard();
-        if (window.ArcadeController) ArcadeController.rumble(0, { duration: 160, strong: 0.5, weak: 0.4 });
-      } else {
-        let cheered = false;
-        if (nTr > 0) {                    // completed trick(s): chained boost
-          let pct = CHAIN_FIRST + CHAIN_MORE * (nTr - 1);
-          let distinct = true;
-          for (let i = 1; i < nTr && distinct; i++) {
-            for (let j = 0; j < i; j++) if (P.airTypes[j] === P.airTypes[i]) { distinct = false; break; }
-          }
-          const variety = nTr > 1 && distinct;
-          if (variety) pct += CHAIN_VARIETY;
-          if (pct > CHAIN_CAP) pct = CHAIN_CAP;
-          lastBoostPct = pct;
-          P.v = Math.min(P.v * (1 + pct / 100) + 0.5, VMAX_BOOST);
-          showTrickPop(chainText(nTr, variety));
-          sfx.trickLand();
-          if (window.ArcadeController) ArcadeController.rumble(0, { duration: 180, strong: 0.55, weak: 0.6 });
-          cheered = true;
-        } else lastBoostPct = 0;
-        if (dphi < 0.16) {
-          if (!P.hopAir) {                // aligned landing bonus (stacks)
-            P.v = Math.min(P.v * 1.06 + 0.5, VMAX_BOOST);
-            if (!cheered) {
-              sfx.boost();
-              if (window.ArcadeController) ArcadeController.rumble(0, { duration: 80, strong: 0.25, weak: 0.35 });
-            }
-          } else if (!cheered) sfx.landSoft();
-        } else if (dphi > 0.45) {
-          P.v *= 0.86;
-          P.wobbleT = 0.9;
-          if (!cheered) {
-            sfx.landHard();
-            if (window.ArcadeController) ArcadeController.rumble(0, { duration: 160, strong: 0.5, weak: 0.4 });
-          }
-        } else if (!cheered) sfx.landSoft();
-      }
-      P.hopAir = false;
-    }
-  }
-
-  /* course progress (windowed nearest — cheap, monotonic) */
-  {
-    let j = P.curI;
-    const lim = Math.min(NSM - 1, j + 14);
-    let bd = (P.x - CX[j]) * (P.x - CX[j]) + (P.z - CZ[j]) * (P.z - CZ[j]);
-    for (let k = j + 1; k <= lim; k++) {
-      const dd = (P.x - CX[k]) * (P.x - CX[k]) + (P.z - CZ[k]) * (P.z - CZ[k]);
-      if (dd <= bd) { bd = dd; j = k; }
-    }
-    const prevI = P.curI;
-    P.curI = j;
-    P.s = j * STEP;
-    // ramp lips auto-launch (the blend kernel rounds the lip off, so the
-    // "ground fell away" check alone can shave the jump at low frame heights)
-    if (!P.air && P.v > 8 && Math.abs(P.u) < 5.2) {
-      for (let ri = 0; ri < RAMPS.length; ri++) {
-        const l = RAMPS[ri];
-        if (prevI < l && j >= l) {
-          P.air = true;
-          P.vy = clamp(P.v * 0.17, 1.5, 6.5);
-          P.launchHeading = P.heading;
-          sfx.whoosh();
-          break;
-        }
-      }
-    }
-    if (state === S_RUN) {
-      for (let gi = 0; gi < GATES.length; gi++) {
-        if (prevI < GATES[gi] && j >= GATES[gi]) passGate(gi + 1);
-      }
-      if (prevI < FINISH_I && j >= FINISH_I) finishRun();
-    }
-  }
-
-  /* SNOWMAN — skiing through it is a poof + a nudge, never a crash */
-  {
-    const sm = W.snowman;
-    if (!sm.hit && state === S_RUN) {
-      const dx = P.x - sm.x, dz = P.z - sm.z;
-      if (dx * dx + dz * dz < sm.r * sm.r && P.y < sm.y + 3.0) {
-        sm.hit = true;
-        sm.mesh.visible = false;
-        smHitThisRun = true;
-        spawnSpray(sm.x, sm.y + 1.3, sm.z, dirx * P.v * 0.18, 2.8, dirz * P.v * 0.18, 4.4, 46);
-        sfx.whumpf();
-        if (window.ArcadeController) ArcadeController.rumble(0, { duration: 170, strong: 0.35, weak: 0.5 });
-        P.v = Math.min(P.v * 1.03 + 0.2, VMAX_BOOST);   // +3% racing-line reward
-      }
-    }
-  }
-
-  /* ridge fences: soft invisible rail at the cliff edge */
-  {
-    const wHere = CW[domI] + 1.5;
-    if (CWL[domI] < -0.2 && P.u < -wHere) {
-      const over = -wHere - P.u;
-      P.x += CRX[domI] * over; P.z += CRZ[domI] * over;
-      P.u = -wHere;
-      P.v *= 0.985; P.wobbleT = Math.max(P.wobbleT, 0.3);
-    } else if (CWR[domI] < -0.2 && P.u > wHere) {
-      const over = P.u - wHere;
-      P.x -= CRX[domI] * over; P.z -= CRZ[domI] * over;
-      P.u = wHere;
-      P.v *= 0.985; P.wobbleT = Math.max(P.wobbleT, 0.3);
-    }
-  }
-
-  /* trees & rocks */
-  if (!P.air && P.invulnT <= 0 && state === S_RUN) collideObstacles();
-
-  /* way off course, or hopelessly stuck → gentle respawn */
-  if (state === S_RUN) {
-    const au = Math.abs(P.u);
-    if (au > 42 || h.d > 70) { respawnAtCheckpoint(true); }
-    else if (P.v < 1 && au > CW[domI] + 1 && !P.air) {
-      P.stuckT += DT;
-      if (P.stuckT > 1.6) respawnAtCheckpoint(true);
-    } else P.stuckT = 0;
-  }
-
-  /* snow spray while carving / braking */
-  if (!P.air && P.v > 4 && P.crashT <= 0) {
-    const carveAmt = Math.abs(inp.steer) * P.v * 0.05 + (brake ? P.v * 0.07 : 0);
-    if (carveAmt > 0.35) {
-      const n = Math.min(4, Math.ceil(carveAmt * 0.8));
-      const bx = P.x - dirx * 0.9, bz = P.z - dirz * 0.9;
-      spawnSpray(bx, P.y + 0.15, bz,
-        -dirx * P.v * 0.15 - dirz * inp.steer * 2.5,
-        0.8 + carveAmt * 0.25,
-        -dirz * P.v * 0.15 + dirx * inp.steer * 2.5,
-        1.6, n);
-    }
-  }
-
-  /* particles integrate on the fixed clock */
+/* particles integrate on the fixed clock — once per sim tick */
+function integrateParticles() {
   for (let i = 0; i < SPRAY_N; i++) {
     if (sprayLife[i] <= 0) continue;
     sprayLife[i] -= DT;
@@ -815,11 +736,324 @@ function tickSim() {
       snowPos[i * 3 + 1] = sy;
     }
   }
+}
 
-  /* finish glide-out: bleed speed, sit down the run */
-  if (state === S_FINISH && P.v > 0.4) {
-    P.v = Math.max(0, P.v - 3.5 * DT);
+/* ═════════════ one player's physics tick (shared by 1P and race) ═════════════ */
+function tickPlayer(pl) {
+  const inp = pl.inp, e = E[pl.idx];
+  if (timerStartTick >= 0 && state === S_RUN && !pl.finished)
+    pl.runTime = (TICK - timerStartTick) * DT;
+
+  /* crash tumble: slide, decay, then respawn at the checkpoint */
+  if (pl.crashT > 0) {
+    pl.crashT -= DT;
+    pl.v = Math.max(0, pl.v - 14 * DT);
+    pl.x += Math.sin(pl.heading) * pl.v * DT;
+    pl.z += Math.cos(pl.heading) * pl.v * DT;
+    pl.y = terrainH(pl.x, pl.z);
+    if (pl.crashT <= 0) respawnAtCheckpoint(pl, true);
+    return;
   }
 
+  /* steering (smoothed toward the summed target) */
+  const wobble = pl.wobbleT > 0;
+  if (pl.wobbleT > 0) pl.wobbleT -= DT;
+  if (pl.invulnT > 0) pl.invulnT -= DT;
+  inp.steer += clamp(inp.steerTarget - inp.steer, -8 * DT, 8 * DT);
+  let steer = inp.steer * (wobble ? 0.4 : 1);
+  const finishing = pl.finished || state === S_FINISH;
+  if (finishing) steer = 0;
+
+  /* jump & air tricks (west button / space / X / touch JUMP) */
+  if (e.jump && !finishing && state === S_RUN) {
+    if (!pl.air) {
+      e.jump = false;                     // consume: one press = one hop
+      // timed jump at a ramp lip out-launches the auto-launch
+      let ramped = false;
+      for (let ri = 0; ri < RAMPS.length; ri++) {
+        const l = RAMPS[ri];
+        if (pl.curI >= l - 6 && pl.curI <= l + 1) { ramped = true; break; }
+      }
+      pl.air = true;
+      pl.vy = ramped ? clamp(pl.v * RAMP_JUMP_VY[2], RAMP_JUMP_VY[0], RAMP_JUMP_VY[1]) : HOP_VY;
+      pl.launchHeading = pl.heading;
+      pl.hopAir = !ramped;                // plain hops don't earn the landing boost
+      sfx.whoosh();
+      if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 70, strong: 0.15, weak: 0.3 });
+    } else if (pl.trickT <= 0) {
+      e.jump = false;                     // consume: one press = one trick
+      pl.trickT = TRICK_TIME;
+      pl.trickType = inp.trickY < -0.45 ? TK_FRONT
+        : inp.trickX < -0.45 ? TK_SPIN_L
+        : inp.trickX > 0.45 ? TK_SPIN_R : TK_BACK;
+      pl.trickName = TRICK_NAMES[pl.trickType];
+      sfx.trick();
+      if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 110, strong: 0.25, weak: 0.45 });
+    }
+  }
+
+  const tuck = !finishing && inp.tuck && !pl.air;
+  const brake = finishing || (inp.brake && !pl.air);
+
+  const turnRate = steer * (2.7 / (1 + pl.v / 22)) * (tuck ? 0.55 : 1) * (pl.air ? 0.25 : 1)
+    * clamp(pl.v / 3, 0.35, 1);      // skis can't pivot in place
+  pl.heading += turnRate * DT;
+  if (wobble) pl.heading += Math.sin(TICK * 0.5) * 0.010 * Math.min(1, pl.wobbleT);
+
+  const dirx = Math.sin(pl.heading), dirz = Math.cos(pl.heading);
+
+  if (!pl.air) {
+    const g = terrainGrad(pl.x, pl.z);
+    const slopeAlong = g.x * dirx + g.z * dirz;   // + = uphill ahead
+    pl.grade = slopeAlong;
+    pl.latSlope = g.x * dirz - g.z * dirx;
+    // accelerate down the fall line component we're pointed along
+    pl.v += (-slopeAlong) * 9.81 * DT;
+    const cd = tuck ? MP.cdTuck : MP.cdRun;
+    // rubber-band mercy rides the tuck bite (rbMult = 1 outside a race)
+    if (tuck) pl.v += MP.tuckAccel * pl.rbMult * DT;
+    pl.v -= cd * pl.v * pl.v * DT;
+    pl.v -= 0.010 * 9.81 * DT;
+    pl.v -= Math.abs(turnRate) * pl.v * MP.carve * DT;
+    if (brake) pl.v -= MP.brake * DT;
+    const du = Math.abs(pl.u) - CW[pl.curI];
+    if (du > 1) {
+      const deep = Math.min(1, (du - 1) / 4);
+      pl.v -= deep * (0.10 * 9.81 + 0.02 * pl.v * pl.v) * DT;
+    }
+    if (pl.v < 0) pl.v = 0;
+  } else {
+    pl.vy -= 9.81 * 1.15 * DT;
+  }
+
+  /* advance */
+  pl.x += dirx * pl.v * DT;
+  pl.z += dirz * pl.v * DT;
+  const h = terrainInfo(pl.x, pl.z);
+  const hNow = h.h;
+  pl.u = h.u;
+  const domI = h.i >= 0 ? h.i : pl.curI;
+
+  if (!pl.air) {
+    const dy = hNow - pl.y;
+    if (dy < -0.30 && pl.v > 8) {
+      // ground fell away — we're flying
+      pl.air = true;
+      pl.vy = Math.max(pl.groundVy, -2);
+      pl.launchHeading = pl.heading;
+      sfx.whoosh();
+    } else {
+      pl.groundVy = dy / DT;
+      pl.y = hNow;
+    }
+  }
+  if (pl.air) {
+    pl.y += pl.vy * DT;
+    if (pl.trickT > 0) {                   // spin the trick out mid-air
+      pl.trickT -= DT;
+      if (pl.trickT <= 0) {
+        pl.trickT = 0;
+        if (pl.airN < 8) pl.airTypes[pl.airN] = pl.trickType;
+        pl.airN++;
+        sfx.trickDone();
+      }
+    }
+    if (pl.y <= hNow) {
+      pl.y = hNow;
+      pl.air = false;
+      pl.groundVy = 0;
+      const dphi = Math.abs(wrapAngle(pl.heading - pl.launchHeading));
+      spawnSpray(pl.x, pl.y + 0.2, pl.z, 0, 1.5, 0, 3.5, 26);
+      const midTrick = pl.trickT > 0;
+      const nTr = Math.min(pl.airN, 8);
+      pl.trickT = 0; pl.airN = 0;
+      if (midTrick) {
+        // kid mercy rule: an unfinished trick is a wobble, NEVER a crash
+        pl.v *= 0.94;
+        pl.wobbleT = Math.max(pl.wobbleT, 0.9);
+        pl.boostPct = 0;
+        sfx.landHard();
+        if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 160, strong: 0.5, weak: 0.4 });
+      } else {
+        let cheered = false;
+        if (nTr > 0) {                    // completed trick(s): chained boost
+          let pct = CHAIN_FIRST + CHAIN_MORE * (nTr - 1);
+          let distinct = true;
+          for (let i = 1; i < nTr && distinct; i++) {
+            for (let j = 0; j < i; j++) if (pl.airTypes[j] === pl.airTypes[i]) { distinct = false; break; }
+          }
+          const variety = nTr > 1 && distinct;
+          if (variety) pct += CHAIN_VARIETY;
+          if (pct > CHAIN_CAP) pct = CHAIN_CAP;
+          pl.boostPct = pct;
+          pl.v = Math.min(pl.v * (1 + pct / 100) + 0.5, VMAX_BOOST);
+          showTrickPopFor(pl, chainText(pl, nTr, variety));
+          sfx.trickLand();
+          if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 180, strong: 0.55, weak: 0.6 });
+          cheered = true;
+        } else pl.boostPct = 0;
+        if (dphi < 0.16) {
+          if (!pl.hopAir) {               // aligned landing bonus (stacks)
+            pl.v = Math.min(pl.v * 1.06 + 0.5, VMAX_BOOST);
+            if (!cheered) {
+              sfx.boost();
+              if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 80, strong: 0.25, weak: 0.35 });
+            }
+          } else if (!cheered) sfx.landSoft();
+        } else if (dphi > 0.45) {
+          pl.v *= 0.86;
+          pl.wobbleT = 0.9;
+          if (!cheered) {
+            sfx.landHard();
+            if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 160, strong: 0.5, weak: 0.4 });
+          }
+        } else if (!cheered) sfx.landSoft();
+      }
+      pl.hopAir = false;
+    }
+  }
+
+  /* course progress (windowed nearest — cheap, monotonic) */
+  {
+    let j = pl.curI;
+    const lim = Math.min(NSM - 1, j + 14);
+    let bd = (pl.x - CX[j]) * (pl.x - CX[j]) + (pl.z - CZ[j]) * (pl.z - CZ[j]);
+    for (let k = j + 1; k <= lim; k++) {
+      const dd = (pl.x - CX[k]) * (pl.x - CX[k]) + (pl.z - CZ[k]) * (pl.z - CZ[k]);
+      if (dd <= bd) { bd = dd; j = k; }
+    }
+    const prevI = pl.curI;
+    pl.curI = j;
+    pl.s = j * STEP;
+    // ramp lips auto-launch (the blend kernel rounds the lip off, so the
+    // "ground fell away" check alone can shave the jump at low frame heights)
+    if (!pl.air && pl.v > 8 && Math.abs(pl.u) < 5.2) {
+      for (let ri = 0; ri < RAMPS.length; ri++) {
+        const l = RAMPS[ri];
+        if (prevI < l && j >= l) {
+          pl.air = true;
+          pl.vy = clamp(pl.v * 0.17, 1.5, 6.5);
+          pl.launchHeading = pl.heading;
+          sfx.whoosh();
+          break;
+        }
+      }
+    }
+    if (state === S_RUN && !pl.finished) {
+      for (let gi = 0; gi < GATES.length; gi++) {
+        if (prevI < GATES[gi] && j >= GATES[gi]) passGate(pl, gi + 1);
+      }
+      if (prevI < FINISH_I && j >= FINISH_I) {
+        if (race.on) racePlayerFinish(pl); else finishRun();
+      }
+    }
+  }
+
+  /* SNOWMAN — skiing through it is a poof + a nudge, never a crash.
+     Per-player per-run state: in a race each half tracks its own snowman. */
+  {
+    const sm = W.snowman;
+    if (!pl.smHit && state === S_RUN && !pl.finished) {
+      const dx = pl.x - sm.x, dz = pl.z - sm.z;
+      if (dx * dx + dz * dz < sm.r * sm.r && pl.y < sm.y + 3.0) {
+        pl.smHit = true;
+        if (!race.on) { sm.hit = true; sm.mesh.visible = false; }
+        spawnSpray(sm.x, sm.y + 1.3, sm.z, dirx * pl.v * 0.18, 2.8, dirz * pl.v * 0.18, 4.4, 46);
+        sfx.whumpf();
+        if (window.ArcadeController) ArcadeController.rumble(pl.idx, { duration: 170, strong: 0.35, weak: 0.5 });
+        pl.v = Math.min(pl.v * 1.03 + 0.2, VMAX_BOOST);   // +3% racing-line reward
+      }
+    }
+  }
+
+  /* ridge fences: soft invisible rail at the cliff edge */
+  {
+    const wHere = CW[domI] + 1.5;
+    if (CWL[domI] < -0.2 && pl.u < -wHere) {
+      const over = -wHere - pl.u;
+      pl.x += CRX[domI] * over; pl.z += CRZ[domI] * over;
+      pl.u = -wHere;
+      pl.v *= 0.985; pl.wobbleT = Math.max(pl.wobbleT, 0.3);
+    } else if (CWR[domI] < -0.2 && pl.u > wHere) {
+      const over = pl.u - wHere;
+      pl.x -= CRX[domI] * over; pl.z -= CRZ[domI] * over;
+      pl.u = wHere;
+      pl.v *= 0.985; pl.wobbleT = Math.max(pl.wobbleT, 0.3);
+    }
+  }
+
+  /* trees & rocks */
+  if (!pl.air && pl.invulnT <= 0 && state === S_RUN && !pl.finished) collideObstacles(pl);
+
+  /* way off course, or hopelessly stuck → gentle respawn */
+  if (state === S_RUN && !pl.finished) {
+    const au = Math.abs(pl.u);
+    if (au > 42 || h.d > 70) { respawnAtCheckpoint(pl, true); }
+    else if (pl.v < 1 && au > CW[domI] + 1 && !pl.air) {
+      pl.stuckT += DT;
+      if (pl.stuckT > 1.6) respawnAtCheckpoint(pl, true);
+    } else pl.stuckT = 0;
+  }
+
+  /* snow spray while carving / braking */
+  if (!pl.air && pl.v > 4 && pl.crashT <= 0) {
+    const carveAmt = Math.abs(inp.steer) * pl.v * 0.05 + (brake ? pl.v * 0.07 : 0);
+    if (carveAmt > 0.35) {
+      const n = Math.min(4, Math.ceil(carveAmt * 0.8));
+      const bx = pl.x - dirx * 0.9, bz = pl.z - dirz * 0.9;
+      spawnSpray(bx, pl.y + 0.15, bz,
+        -dirx * pl.v * 0.15 - dirz * inp.steer * 2.5,
+        0.8 + carveAmt * 0.25,
+        -dirz * pl.v * 0.15 + dirx * inp.steer * 2.5,
+        1.6, n);
+    }
+  }
+
+  /* finish glide-out: bleed speed, sit down the run */
+  if ((state === S_FINISH || (race.on && pl.finished)) && pl.v > 0.4) {
+    pl.v = Math.max(0, pl.v - 3.5 * DT);
+  }
+}
+
+/* ═════════════════ the fixed-step sim tick ═════════════════ */
+function tickSim() {
+  if (state === S_TITLE || state === S_SELECT || state === S_PAUSE || state === S_RESULTS) return;
+  TICK++;
+  if (state === S_COUNT) {
+    cdT -= DT;
+    const n = Math.max(0, Math.ceil(cdT / 0.6));
+    if (n !== cdShown) {
+      cdShown = n;
+      countdownEl.textContent = n > 0 ? String(n) : '';
+      if (n > 0) sfx.count(n);
+    }
+    if (cdT <= 0) {
+      state = S_RUN;
+      setBodyState(S_RUN);
+      countdownEl.style.display = 'none';
+      timerStartTick = TICK;
+      players[0].v = 3;                  // the push out of the start gate
+      if (race.on) players[1].v = 3;
+      flash('GO!', '#63e58b');
+      sfx.go();
+    }
+    syncTelemetry();
+    return;
+  }
+
+  if (race.on) updateRubberBand();
+  tickPlayer(players[0]);
+  if (!race.on) {
+    // 1P keeps the exact legacy tick shape: particles integrate on the same
+    // path they always did (skipped during the crash-tumble early return)
+    if (players[0].crashT <= 0) integrateParticles();
+  } else {
+    tickPlayer(players[1]);
+    integrateParticles();
+    if (state === S_RUN && players[0].finished && players[1].finished) {
+      race.resultsT -= DT;
+      if (race.resultsT <= 0) showRaceResults();
+    }
+  }
   syncTelemetry();
 }

@@ -5,7 +5,7 @@
 // buttons or key events) and verified through the read-only telemetry
 // window.__pp — never through gameplay hooks.
 //
-//   /opt/homebrew/bin/node test/harness.mjs all     (or: gates kbd shots ipad)
+//   /opt/homebrew/bin/node test/harness.mjs all     (or: gates mtn nr tricks fun race kbd shots ipad)
 //
 // Requires node >= 22 (global WebSocket).
 import { spawn } from 'node:child_process';
@@ -115,33 +115,42 @@ async function pageSession(port) {
   throw new Error('no page target');
 }
 
+// TWO standard-mapping pads: slot 0 (P1) and slot 1 (P2). Distinct product
+// ids so no phantom-DS4-sub-device filtering could ever collapse them.
 const PAD_STUB = `(function(){
   const mk=()=>({pressed:false,touched:false,value:0});
-  const pad={id:'Fake DualShock 4 (STANDARD GAMEPAD Vendor: 054c Product: 09cc)',
-    index:0,connected:true,mapping:'standard',timestamp:0,
+  const mkPad=(i,id)=>({id,
+    index:i,connected:true,mapping:'standard',timestamp:0,
     axes:[0,0,0,0],buttons:Array.from({length:17},mk),
-    vibrationActuator:{playEffect:()=>Promise.resolve('complete')}};
-  window.__fakePad={
-    axes(lx,ly){pad.axes[0]=lx||0;pad.axes[1]=ly||0;pad.timestamp=performance.now();},
+    vibrationActuator:{playEffect:()=>Promise.resolve('complete')}});
+  const pad=mkPad(0,'Fake DualShock 4 (STANDARD GAMEPAD Vendor: 054c Product: 09cc)');
+  const pad2=mkPad(1,'Fake Xbox 360 Controller (STANDARD GAMEPAD Vendor: 045e Product: 028e)');
+  const api=p=>({
+    axes(lx,ly){p.axes[0]=lx||0;p.axes[1]=ly||0;p.timestamp=performance.now();},
     press(){const idx=Array.prototype.slice.call(arguments);
-      for(let i=0;i<17;i++){const p=idx.indexOf(i)>=0;pad.buttons[i].pressed=p;pad.buttons[i].value=p?1:0;}
-      pad.timestamp=performance.now();},
-  };
-  Object.defineProperty(navigator,'getGamepads',{value:function(){return [pad,null,null,null];},configurable:true});
+      for(let i=0;i<17;i++){const on=idx.indexOf(i)>=0;p.buttons[i].pressed=on;p.buttons[i].value=on?1:0;}
+      p.timestamp=performance.now();},
+  });
+  window.__fakePad=api(pad);
+  window.__fakePad2=api(pad2);
+  Object.defineProperty(navigator,'getGamepads',{value:function(){return [pad,pad2,null,null];},configurable:true});
 })();`;
 
 // In-page bot: a robot player. Reads telemetry + static course dump, writes
 // REAL fake-pad input every animation frame. Modes: 'race' | 'ram'.
+// TWO channels: __bot drives pad 0 from __pp (P1); __bot2 drives pad 1 from
+// the __pp.p2 mirror — so either player can be piloted independently.
 const BOT_SRC = `(function(){
   if (window.__botInstalled) return; window.__botInstalled = true;
-  window.__bot = { on:false, mode:'race', forceTuck:false, forceBrake:false, noTuck:false,
-                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[], path:null, pathIdx:0 };
+  const mkBot = () => ({ on:false, mode:'race', forceTuck:false, forceBrake:false, noTuck:false,
+                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[], path:null, pathIdx:0 });
+  window.__bot = mkBot();
+  window.__bot2 = mkBot();
   const wrap = a => { while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
-  function step(){
-    requestAnimationFrame(step);
-    const b = window.__bot, T = window.__pp, C = window.__ppCourse;
-    if (!b.on || !T || !C) return;
-    if (T.state !== 'run' || T.mode === 'crash') { window.__fakePad.press(); return; }
+  function drive(b, T, pad){
+    const C = window.__ppCourse;
+    if (!b.on || !T || !C || !pad) return;
+    if (T.state !== 'run' || T.mode === 'crash') { pad.press(); return; }
     let tx, tz, la;
     let onPath = false;
     const idx = Math.min(C.length-1, Math.max(0, Math.round(T.s/9)));
@@ -184,11 +193,18 @@ const BOT_SRC = `(function(){
     if (b.forceTuck) { tuck = true; brake = false; }
     if (b.forceBrake) { brake = true; tuck = false; }
     if (b.noTuck) tuck = false;
-    window.__fakePad.axes(steer, 0);
+    pad.axes(steer, 0);
     const btns = b.extraBtns.slice();
     if (tuck) btns.push(0);
     if (brake) btns.push(1);      // east = brake
-    window.__fakePad.press.apply(null, btns);
+    pad.press.apply(null, btns);
+  }
+  function step(){
+    requestAnimationFrame(step);
+    const T = window.__pp;
+    if (!T) return;
+    drive(window.__bot, T, window.__fakePad);
+    if (T.p2 && window.__fakePad2) drive(window.__bot2, T.p2, window.__fakePad2);
   }
   requestAnimationFrame(step);
 })();`;
@@ -250,6 +266,10 @@ function makeApi(c) {
     async tapButton(i) {
       await api.press(i); await sleep(120); await api.press(); await sleep(120);
     },
+    async press2(...idx) { await api.eval(`__fakePad2.press(${idx.join(',')})`); },
+    async tapButton2(i) {
+      await api.press2(i); await sleep(120); await api.press2(); await sleep(120);
+    },
     async key(key, code, vk, down) {
       // Keys are dispatched as KeyboardEvents on window — the exact same
       // handlers the real keyboard drives. CDP Input.dispatchKeyEvent
@@ -270,6 +290,9 @@ function makeApi(c) {
     async installBot() { await api.eval(BOT_SRC); },
     async bot(props) {
       await api.eval(`Object.assign(window.__bot, ${JSON.stringify(props)})`);
+    },
+    async bot2(props) {
+      await api.eval(`Object.assign(window.__bot2, ${JSON.stringify(props)})`);
     },
   };
   return api;
@@ -1284,6 +1307,376 @@ async function funSession(base) {
   }
 }
 
+/* ═══════════ RACE SESSION — 2P split-screen: join, independence, flow,
+   mercy, rubber-band, pause, perf, isolation. Two fake pads + kbd-P2. ═══════════ */
+async function raceSession(base) {
+  console.log('\n── 2P split-screen race session (?turbo=8, two pads) ──');
+  const seedAlp = JSON.stringify({ time: 95, sectors: [21, 25, 26, 20] });
+  const seedNr = JSON.stringify({ time: 100, sectors: [22, 26, 27, 21] });
+  // node-side point-in-box test against the game's arch/gate solids
+  const camClear = (boxes, cp) => {
+    for (const b of boxes) {
+      const rx = cp.x - b.x, rz = cp.z - b.z;
+      const along = rx * b.dx + rz * b.dz;
+      const lat = rx * b.dz - rz * b.dx;
+      if (Math.abs(along) <= b.ht && Math.abs(lat) <= b.hw && cp.y >= b.y0 && cp.y <= b.y1) return false;
+    }
+    return true;
+  };
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.eval(`localStorage.setItem('powderpeak_best', ${JSON.stringify(seedAlp)});` +
+                 `localStorage.setItem('powderpeak_best_nr', ${JSON.stringify(seedNr)});`);
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=2');
+    await sleep(500);
+
+    /* ── join / un-join on the mountain select ── */
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select screen');
+    gate('race: P2 join prompt shown when pad1 present', await A.eval('__pp.race.prompt') === true);
+    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
+    gate('race: P2 ✕ (pad slot 1) joins', await A.eval('__pp.race.joined') === true &&
+      await A.eval('__pp.race.p2src') === 'pad');
+    gate('race: P1/P2 chips appear on the cards',
+      await A.eval(`document.body.classList.contains('p2joined') &&
+        getComputedStyle(document.querySelector('#mcard0 .pchips')).display !== 'none' &&
+        getComputedStyle(document.querySelector('#mcard1 .pchips')).display !== 'none'`));
+    for (let i = 0; i < 6 && (await A.eval('__pp.race.joined')); i++) await A.tapButton2(1);
+    gate('race: P2 ○ un-joins before launch', await A.eval('__pp.race.joined') === false);
+    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
+    await sleep(300);
+    await A.shot('30-race-select-joined');
+
+    /* ── launch on ALPENGLOW; start-line framing + arch clearance ── */
+    for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 0; i++) await A.tapButton(14);
+    await A.eval('window.__ppTurbo = 1');       // hold the countdown for checks
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'race start');
+    gate('race: confirming with P2 joined starts a split RACE',
+      await A.eval('__pp.race.on') === true);
+    await sleep(400);                           // a few rendered frames settle
+    const boxes = await A.eval('window.__ppGateBoxes');
+    const snap0 = await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX, c1:{x:__pp.camPos.x,y:__pp.camPos.y,z:__pp.camPos.z}, c2:{x:__pp.p2.camPos.x,y:__pp.p2.camPos.y,z:__pp.p2.camPos.z}})');
+    gate('race: start-line framing — both skiers centered (|ndcX| ≤ 0.15)',
+      Math.abs(snap0.n1) <= 0.15 && Math.abs(snap0.n2) <= 0.15,
+      `ndc P1 ${snap0.n1.toFixed(3)} / P2 ${snap0.n2.toFixed(3)}`);
+    gate('race: start cams clear of arch/gate geometry',
+      camClear(boxes, snap0.c1) && camClear(boxes, snap0.c2));
+    await A.shot('31-race-startline');
+    await A.eval('window.__ppTurbo = 8');
+    await A.waitFor(`__pp.state==='run'`, 15000, 'countdown → run');
+
+    /* ── independence: opposite sticks, screen-correct per-player carve ── */
+    await A.waitFor('__pp.speed > 6 && __pp.p2.speed > 6', 30000, 'both moving');
+    await A.eval('__fakePad.axes(0,0); __fakePad.press(); __fakePad2.axes(0,0); __fakePad2.press();');
+    await A.waitTicks(10);
+    const i0 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z,rx:__pp.camRight.x,rz:__pp.camRight.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z,rx:__pp.p2.camRight.x,rz:__pp.p2.camRight.z}})');
+    await A.eval('__fakePad.axes(-1,0); __fakePad2.axes(1,0);');
+    await A.waitTicks(60);
+    await A.eval('__fakePad.axes(0,0); __fakePad2.axes(0,0);');
+    const i1 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z}})');
+    const lat1 = (i1.p1.x - i0.p1.x) * i0.p1.rx + (i1.p1.z - i0.p1.z) * i0.p1.rz;
+    const lat2 = (i1.p2.x - i0.p2.x) * i0.p2.rx + (i1.p2.z - i0.p2.z) * i0.p2.rz;
+    gate('race: P1 stick-left → screen-LEFT while P2 stick-right → screen-RIGHT (independent sims)',
+      lat1 < -0.8 && lat2 > 0.8, `lat P1 ${lat1.toFixed(2)} m / P2 ${lat2.toFixed(2)} m`);
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitTicks(30);
+    await A.shot('32-race-early');
+    await A.eval('window.__ppTurbo = 8');
+
+    /* ── bots race; P2 handicapped so P1 wins; sample centering en route ── */
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    await A.bot2({ on: true, mode: 'race', noTuck: true });
+    const ndcSamples = [];
+    for (const s of [400, 700]) {
+      await A.waitFor(`__pp.s > ${s}`, 240000, 'reach s=' + s);
+      if (await A.eval(`__pp.state==='run' && !__pp.air && __pp.p2.state==='run'`)) {
+        ndcSamples.push(await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX})'));
+      }
+    }
+    // mid-air trick on ramp 2 for the split trick-cam shot
+    await A.waitFor('__pp.s > 930', 240000, 'near ramp 2');
+    await A.bot({ forceTuck: true });
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitFor(`__pp.mode==='air'`, 90000, 'P1 airborne off ramp 2');
+    await A.bot({ on: false, forceTuck: false });
+    await A.eval('__fakePad.press(2)');
+    await A.waitFor('__pp.trick === true', 3000, 'P1 trick starts');
+    await A.eval('__fakePad.press()');
+    await sleep(200);
+    await A.shot('33-race-trick');
+    await A.waitFor('__pp.air === false', 15000, 'P1 lands');
+    await A.bot({ on: true, mode: 'race' });
+    await A.eval('window.__ppTurbo = 8');
+
+    /* ── rubber-band mercy: trailing P2 gets the quiet tuck bonus ── */
+    await A.bot2({ forceBrake: true });
+    await A.waitFor('__pp.race.gap > 62', 180000, 'gap past the far band');
+    const rbFar = await A.eval('({rb0:__pp.race.rb[0], rb1:__pp.race.rb[1], gap:__pp.race.gap})');
+    gate('race rubber-band: full +4% tuck accel at 60m+ behind, leader unaffected',
+      Math.abs(rbFar.rb1 - 1.04) < 1e-6 && rbFar.rb0 === 1,
+      `gap ${rbFar.gap.toFixed(0)}m → rb ${rbFar.rb1.toFixed(3)} / leader ${rbFar.rb0}`);
+    // P1 brakes, tucked P2 chases back through the 15..60 m band — the
+    // multiplier must track the decided linear ramp at the sampled gap
+    await A.bot({ forceBrake: true });
+    await A.bot2({ forceBrake: false, forceTuck: true });
+    let mid = null;
+    const tMid = Date.now();
+    while (Date.now() - tMid < 180000) {
+      const m = await A.eval('({rb1:__pp.race.rb[1], gap:__pp.race.gap})');
+      if (m.gap < 58 && m.gap > 19) { mid = m; break; }
+      if (m.gap <= 19) break;
+      await sleep(30);
+    }
+    const midExp = mid ? 1 + 0.04 * Math.min(1, Math.max(0, (mid.gap - 15) / 45)) : 0;
+    gate('race rubber-band: linear ramp between 15m and 60m',
+      !!mid && Math.abs(mid.rb1 - midExp) < 0.006,
+      mid && `gap ${mid.gap.toFixed(1)}m → rb ${mid.rb1.toFixed(4)} (expect ${midExp.toFixed(4)})`);
+    // hand the race back: P1 sprints while P2 sits on the brakes until P1
+    // has a decisive lead again, so the scripted winner is P1
+    await A.bot({ forceBrake: false });
+    await A.bot2({ forceTuck: false, forceBrake: true });
+    await A.waitFor('__pp.race.gap > 60 || __pp.race.finished[0]', 240000, 'P1 retakes a safe lead');
+    await A.bot2({ forceBrake: false, noTuck: true });
+
+    /* ── finish order, banner, results, 1P-best isolation ── */
+    await A.waitFor('__pp.race.finished[0] === true', 300000, 'P1 crosses first');
+    gate('race: winner = first across the line', await A.eval('__pp.race.winner') === 0);
+    const ban = await A.eval(`({txt: document.getElementById('rban1').textContent,
+      shown: document.getElementById('rban1').classList.contains('show'),
+      other: document.getElementById('rban0').classList.contains('show')})`);
+    gate('race: "P1 FINISHED!" banner on P2 half while P2 completes',
+      ban.shown && ban.txt === 'P1 FINISHED!' && !ban.other, JSON.stringify(ban));
+    await A.shot('34-race-banner');
+    await A.waitFor(`__pp.state==='results'`, 300000, 'both finish → results');
+    const res = await A.eval(`({w: document.getElementById('rrWinner').textContent,
+      wc: document.getElementById('rrWinner').className,
+      t0: document.getElementById('rrT0').textContent,
+      t1: document.getElementById('rrT1').textContent,
+      times: __pp.race.times.slice(),
+      splitRows: document.getElementById('rrSplits').textContent})`);
+    gate('race results: winner named big', res.w === 'P1 WINS!' && res.wc === 'p1', res.w);
+    gate('race results: both times shown, winner faster',
+      /\d:\d\d\.\d\d/.test(res.t0) && /\d:\d\d\.\d\d/.test(res.t1) &&
+      res.times[0] < res.times[1], `${res.t0} vs ${res.t1}`);
+    gate('race results: condensed sector splits for both players',
+      res.splitRows.includes('S1') && res.splitRows.includes('S4') &&
+      res.splitRows.includes('P1') && res.splitRows.includes('P2'));
+    gate('race: 1P best times/medals untouched by a full 2P race',
+      (await A.eval(`localStorage.getItem('powderpeak_best')`)) === seedAlp &&
+      (await A.eval(`localStorage.getItem('powderpeak_best_nr')`)) === seedNr);
+    gate('race: skiers stayed centered in their halves mid-course (|ndcX| ≤ 0.15)',
+      ndcSamples.length >= 1 && ndcSamples.every(s => Math.abs(s.n1) <= 0.15 && Math.abs(s.n2) <= 0.15),
+      ndcSamples.map(s => `${s.n1.toFixed(2)}/${s.n2.toFixed(2)}`).join(' '));
+    const perfAlp = await A.eval('__pp.perf');
+    gate('race perf (alp): combined split draw calls ≤ 110', perfAlp.maxCalls <= 110,
+      `max ${perfAlp.maxCalls} (sectors ${perfAlp.sectorCalls.join('/')})`);
+    gate('race perf (alp): combined split triangles ≤ 120k', perfAlp.maxTris <= 120000,
+      `max ${perfAlp.maxTris} (sectors ${perfAlp.sectorTris.join('/')})`);
+    gate('race perf (alp): every sector sampled in split', perfAlp.sectorCalls.every(v => v > 0),
+      perfAlp.sectorCalls.join('/'));
+    await sleep(900);
+    await A.shot('35-race-results');
+
+    /* ── rematch ── */
+    await A.bot({ on: false }); await A.bot2({ on: false });
+    await A.eval('__fakePad.press(); __fakePad2.press(); __fakePad.axes(0,0); __fakePad2.axes(0,0);');
+    await sleep(1100);                        // results input guard
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'rematch');
+    gate('race: ✕ on results = rematch, both back at the gate',
+      await A.eval('__pp.race.on === true && __pp.s < 40 && __pp.p2.s < 40'));
+    await A.waitFor(`__pp.state==='run'`, 15000, 'rematch running');
+
+    /* ── mercy: P1 crashes, P2 keeps racing; respawn at P1's checkpoint ── */
+    await A.bot({ on: true, mode: 'race' });
+    await A.bot2({ on: true, mode: 'race' });
+    const course = await A.eval('window.__ppCourse');
+    const obstacles = await A.eval('window.__ppObstacles');
+    let ram = null;
+    for (const o of obstacles) {
+      const n = nearestCourse(course, o.x, o.z);
+      if (n.d < course[n.i].w - 0.8 && n.s > 500 && (!ram || n.s < ram.s)) ram = { ...o, s: n.s };
+    }
+    gate('race mercy: an in-piste tree exists ahead', !!ram, ram && `s=${ram.s}`);
+    await A.waitFor(`__pp.s > ${ram.s - 90}`, 240000, 'approach ram tree');
+    await A.bot({ mode: 'ram', ramX: ram.x, ramZ: ram.z });
+    await A.eval('window.__ppTurbo = 2');
+    await A.waitFor(`__pp.state==='crash'`, 90000, 'P1 crashes');
+    const m0 = await A.eval('({p2s: __pp.p2.s, p2st: __pp.p2.state})');
+    await A.shot('36-race-crash');
+    await A.waitTicks(30);
+    const m1 = await A.eval('({p2s: __pp.p2.s, p2st: __pp.p2.state})');
+    gate('race mercy: P2 keeps racing while P1 tumbles',
+      m0.p2st === 'run' && m1.p2st === 'run' && m1.p2s > m0.p2s + 1,
+      `P2 s ${m0.p2s.toFixed(0)} → ${m1.p2s.toFixed(0)} during P1 crash`);
+    await A.bot({ mode: 'race' });
+    await A.waitFor(`__pp.state==='run' && __pp.mode==='ground'`, 60000, 'P1 respawns');
+    const gates2 = await A.eval('window.__ppGates');
+    const rsp = await A.eval('({cp: __pp.checkpoint, s: __pp.s, v: __pp.speed})');
+    const cpS = rsp.cp === 0 ? 9 : gates2.gates[rsp.cp - 1];
+    gate('race mercy: P1 respawns at its OWN checkpoint, moving slowly',
+      Math.abs(rsp.s - cpS) < 15 && rsp.v < 8, `s=${rsp.s} vs checkpoint s=${cpS}, v=${rsp.v.toFixed(1)}`);
+    await A.waitTicks(40);                    // chase cam settles behind again
+    const rspCam = await A.eval('({c:{x:__pp.camPos.x,y:__pp.camPos.y,z:__pp.camPos.z}, n:__pp.ndcX})');
+    gate('race mercy: respawn cam settles clear of the checkpoint gate, skier centered',
+      camClear(boxes, rspCam.c) && Math.abs(rspCam.n) <= 0.15, `ndc ${rspCam.n.toFixed(3)}`);
+    await A.shot('37-race-respawn-gate');
+    await A.eval('window.__ppTurbo = 8');
+
+    /* ── pause from EITHER pad freezes BOTH sims ── */
+    let paused = false;
+    for (let i = 0; i < 6 && !paused; i++) {
+      await A.tapButton2(9);
+      try { await A.waitFor(`__pp.state==='pause'`, 1500, ''); paused = true; } catch {}
+    }
+    gate('race pause: P2 START pauses both', paused);
+    const pt = await A.eval('({t:__pp.tick, s1:__pp.s, s2:__pp.p2.s})');
+    await sleep(450);
+    const pt2 = await A.eval('({t:__pp.tick, s1:__pp.s, s2:__pp.p2.s})');
+    gate('race pause: both sims frozen', pt.t === pt2.t && pt.s1 === pt2.s1 && pt.s2 === pt2.s2,
+      `tick ${pt.t}`);
+    // any pad navigates the shared menu: P1 confirms RESUME
+    await tapUntil(A, 0, `__pp.state==='run'`, 'resume');
+    gate('race pause: RESUME continues both', true);
+    // P1 START → RESTART RACE resets both to the gate
+    await tapUntil(A, 9, `__pp.state==='pause'`, 'pause again');
+    await A.tapButton2(13);                    // P2's dpad navigates too
+    if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) await A.tapButton2(13);
+    gate('race pause: menu shows RESTART RACE',
+      await A.eval(`document.getElementById('mi1').textContent`) === 'RESTART RACE');
+    await tapUntil(A, 0, `(__pp.state==='countdown'||__pp.state==='run') && __pp.s < 40 && __pp.p2.s < 40`, 'restart race');
+    gate('race pause: RESTART RACE puts both back at the gate', true);
+    await A.waitFor(`__pp.state==='run'`, 15000, 'restarted race runs');
+    // QUIT TO SELECT keeps P2 joined
+    await tapUntil(A, 9, `__pp.state==='pause'`, 'pause for quit');
+    for (let i = 0; i < 6 && !(await A.eval(`document.getElementById('mi2').className.includes('sel')`)); i++) {
+      await A.tapButton(13);
+    }
+    await tapUntil(A, 0, `__pp.state==='select'`, 'quit to select');
+    gate('race pause: QUIT TO SELECT returns to the mountain select, P2 still joined',
+      await A.eval('__pp.race.joined') === true);
+
+    /* ── keyboard-as-P2 (desktop): joins when P1 is on a pad ── */
+    await A.eval('window.__ppTurbo = 1');
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=3');
+    await sleep(500);
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select (kbd join)');   // pad0 use → P1 on pad
+    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapKey('Enter', 'Enter', 13);
+    gate('race kbd: keyboard ✕ joins as P2 when P1 is on a pad',
+      await A.eval(`__pp.race.joined === true && __pp.race.p2src === 'kbd'`));
+    for (let i = 0; i < 6 && (await A.eval(`__pp.race.joined && __pp.state==='select'`)); i++) {
+      await A.tapKey('Escape', 'Escape', 27);
+    }
+    gate('race kbd: ESC un-joins keyboard P2', await A.eval('__pp.race.joined') === false);
+    if (await A.eval(`__pp.state`) === 'title') await tapUntil(A, 0, `__pp.state==='select'`, 'back to select');
+    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapKey('Enter', 'Enter', 13);
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'kbd race start');
+    gate('race kbd: race starts with keyboard P2', await A.eval(`__pp.race.on && __pp.race.p2src==='kbd'`));
+    await A.waitFor(`__pp.state==='run'`, 15000, 'kbd race running');
+    await A.waitFor('__pp.speed > 6 && __pp.p2.speed > 6', 30000, 'both moving (kbd)');
+    await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+    await A.waitTicks(10);
+    const k0 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z,rx:__pp.camRight.x,rz:__pp.camRight.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z,rx:__pp.p2.camRight.x,rz:__pp.p2.camRight.z}})');
+    await A.eval('__fakePad.axes(-1,0)');
+    await A.key('ArrowRight', 'ArrowRight', 39, true);
+    await A.waitTicks(60);
+    await A.eval('__fakePad.axes(0,0)');
+    await A.key('ArrowRight', 'ArrowRight', 39, false);
+    const k1 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z}})');
+    const kl1 = (k1.p1.x - k0.p1.x) * k0.p1.rx + (k1.p1.z - k0.p1.z) * k0.p1.rz;
+    const kl2 = (k1.p2.x - k0.p2.x) * k0.p2.rx + (k1.p2.z - k0.p2.z) * k0.p2.rz;
+    gate('race kbd: keyboard steers ONLY P2 (pad P1 left, key P2 right, both screen-correct)',
+      kl1 < -0.8 && kl2 > 0.8, `lat P1 ${kl1.toFixed(2)} m / P2 ${kl2.toFixed(2)} m`);
+    // Escape (P2's pause key) freezes both
+    await A.tapKey('Escape', 'Escape', 27);
+    await A.waitFor(`__pp.state==='pause'`, 6000, 'kbd P2 pause');
+    const kt = await A.eval('__pp.tick');
+    await sleep(400);
+    gate('race kbd: P2 keyboard pause freezes both sims', kt === await A.eval('__pp.tick'));
+    gate('zero console errors/warnings (race session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+
+  /* ── NIGHT RIDGE split: fresh chrome (heavy reloads kill swiftshader) ── */
+  console.log('── race session: NIGHT RIDGE split (?turbo=10) ──');
+  const g2 = await launchChrome();
+  try {
+    const c = await pageSession(g2.port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await sleep(500);
+    await tapUntil(A, 0, `__pp.state==='select'`, 'nr select');
+    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
+    for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 1; i++) await A.tapButton(15);
+    await A.eval('window.__ppTurbo = 1');
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'nr race start');
+    gate('race nr: split race starts on NIGHT RIDGE',
+      await A.eval(`__pp.race.on === true && __pp.mountain === 'nr'`));
+    await sleep(400);
+    const nrBoxes = await A.eval('window.__ppGateBoxes');
+    const nrSnap = await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX, c1:{x:__pp.camPos.x,y:__pp.camPos.y,z:__pp.camPos.z}, c2:{x:__pp.p2.camPos.x,y:__pp.p2.camPos.y,z:__pp.p2.camPos.z}})');
+    gate('race nr: start-line centering + arch clearance',
+      Math.abs(nrSnap.n1) <= 0.15 && Math.abs(nrSnap.n2) <= 0.15 &&
+      camClear(nrBoxes, nrSnap.c1) && camClear(nrBoxes, nrSnap.c2),
+      `ndc ${nrSnap.n1.toFixed(3)} / ${nrSnap.n2.toFixed(3)}`);
+    await A.eval('window.__ppTurbo = 10');
+    await A.waitFor(`__pp.state==='run'`, 20000, 'nr race running');
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    await A.bot2({ on: true, mode: 'race', noTuck: true });
+    await A.waitFor('__pp.s > 220', 240000, 'nr under way');
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitTicks(20);
+    await A.shot('38-race-nr-night');
+    await A.eval('window.__ppTurbo = 10');
+    // no GC pressure across 900 split ticks (both sims + double render live)
+    await A.eval('window.gc && window.gc()');
+    const h0 = await A.eval('performance.memory.usedJSHeapSize');
+    await A.waitTicks(900, 90000);
+    await A.eval('window.gc && window.gc()');
+    const h1 = await A.eval('performance.memory.usedJSHeapSize');
+    const growth = (h1 - h0) / 1e6;
+    gate('race perf: no per-frame GC pressure in split', growth < 2.5,
+      `heap Δ ${growth.toFixed(2)} MB over 900 split ticks`);
+    const nrNdc = [];
+    for (const s of [900, 1400]) {
+      await A.waitFor(`__pp.s > ${s}`, 300000, 'nr reach s=' + s);
+      if (await A.eval(`__pp.state==='run' && !__pp.air && __pp.p2.state==='run'`)) {
+        nrNdc.push(await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX})'));
+      }
+    }
+    await A.waitFor(`__pp.state==='results'`, 400000, 'nr race results');
+    gate('race nr: winner declared', await A.eval('__pp.race.winner') === 0 &&
+      await A.eval(`document.getElementById('rrWinner').textContent`) === 'P1 WINS!');
+    gate('race nr: skiers centered mid-course (|ndcX| ≤ 0.15)',
+      nrNdc.length >= 1 && nrNdc.every(s => Math.abs(s.n1) <= 0.15 && Math.abs(s.n2) <= 0.15),
+      nrNdc.map(s => `${s.n1.toFixed(2)}/${s.n2.toFixed(2)}`).join(' '));
+    const perfNr = await A.eval('__pp.perf');
+    gate('race perf (nr): combined split draw calls ≤ 110', perfNr.maxCalls <= 110,
+      `max ${perfNr.maxCalls} (sectors ${perfNr.sectorCalls.join('/')})`);
+    gate('race perf (nr): combined split triangles ≤ 120k', perfNr.maxTris <= 120000,
+      `max ${perfNr.maxTris} (sectors ${perfNr.sectorTris.join('/')})`);
+    gate('race perf (nr): every sector sampled in split', perfNr.sectorCalls.every(v => v > 0),
+      perfNr.sectorCalls.join('/'));
+    gate('zero console errors/warnings (race nr session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    g2.proc.kill(); await sleep(400);
+    try { fs.rmSync(g2.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
 /* ═══════════════ CLEAN TIMING RUN — medal calibration ═══════════════ */
 async function timeSession(base, mtn) {
   console.log(`\n── clean bot timing run (?turbo=10, ${mtn}) ──`);
@@ -1371,6 +1764,7 @@ try {
   if (which === 'all' || which === 'nr') await runSession('nr', () => nrSession(base));
   if (which === 'all' || which === 'tricks') await runSession('tricks', () => tricksSession(base));
   if (which === 'all' || which === 'fun') await runSession('fun', () => funSession(base));
+  if (which === 'all' || which === 'race') await runSession('race', () => raceSession(base));
   if (which === 'all' || which === 'kbd') await runSession('kbd', () => kbdSession(base));
   if (which === 'all' || which === 'shots') await runSession('shots', () => shotsSession(base));
   if (which === 'all' || which === 'ipad') await runSession('ipad', () => ipadSession(base));
