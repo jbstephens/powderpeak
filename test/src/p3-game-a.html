@@ -6,6 +6,7 @@
    ═══════════════════════════════════════════════════════════════════════ */
 (function () {
 'use strict';
+const BOOT_T0 = performance.now();
 
 /* ───────────────────────── config / flags ───────────────────────── */
 const VW = 1280, VH = 720;
@@ -71,13 +72,15 @@ function makeNoise(SEED) {
    A winding piste descending the mountain. Authored as segments:
    len (m), hdg = heading at segment END (deg, + = right of fall line),
    grade (drop per meter), w (piste half-width m), style, flags.        */
-const ST_OPEN = 0, ST_SLALOM = 1, ST_HAIRPIN = 2, ST_RIDGE = 3;
+const ST_OPEN = 0, ST_SLALOM = 1, ST_HAIRPIN = 2, ST_RIDGE = 3, ST_CHUTE = 4, ST_MOGUL = 5;
 function segList() {
   const SEGS = [];
   const S = (len, hdg, grade, w, style, flags) => {
     SEGS.push({ len, hdg, grade, w, style: style || ST_OPEN,
       ramp: !!(flags && flags.ramp), gate: !!(flags && flags.gate),
-      scut: !!(flags && flags.scut) });
+      scut: !!(flags && flags.scut),
+      drop: (flags && flags.drop) || 0,   // 1 = chute drop-in, 2 = big ledge
+      fin: !!(flags && flags.fin) });     // FINISH line at this segment's end
   };
   const slalomRun = (count, period, amp, grade, w, scut) => {
     let a = -amp;
@@ -111,8 +114,12 @@ function segsAlpenglow() {
   S(60, 55, .12, 9);
   S(52, -58, .09, 9, ST_HAIRPIN);          // HAIRPIN 3
   S(130, -4, .26, 12, ST_OPEN, { ramp: 1 });  // RAMP 4 — the schuss
-  S(115, 4, .21, 13);                      // FINISH at end of this one
-  S(70, 0, .05, 14);                       // runout meadow
+  S(115, 4, .21, 13, ST_OPEN, { fin: 1 }); // FINISH at end of this one
+  // long generated run-out valley: the finish-orbit camera's full 360 must
+  // only ever frame made world (scenery-only; coarse tiles past the line)
+  S(160, 0, .09, 15);
+  S(160, -6, .055, 16);
+  S(150, -6, .04, 17);
   return SEGS;
 }
 /* NIGHT RIDGE — icier, narrower, a touch meaner. ~1.9 km, 4 sectors,
@@ -137,8 +144,78 @@ function segsNightRidge() {
   slalomRun(4, 30, 24, .14, 7.5);          // frozen boulder garden
   S(55, -50, .10, 8, ST_HAIRPIN);          // HAIRPIN 3
   S(140, -2, .27, 11, ST_OPEN, { ramp: 1 }); // RAMP 4 — the midnight schuss
-  S(110, 3, .22, 12);                      // FINISH at end of this one
-  S(70, 0, .05, 13);                       // runout
+  S(110, 3, .22, 12, ST_OPEN, { fin: 1 }); // FINISH at end of this one
+  S(160, 0, .09, 14);                      // long run-out (void fix)
+  S(160, 5, .055, 15);
+  S(150, 5, .04, 16);
+  return SEGS;
+}
+/* DIAMONDBACK — the double black diamond. ~3.9 km racing line, 6 sectors,
+   5 checkpoint gates. High alpine, above the treeline: mogul fields, granite
+   chutes with drop-ins, two big ledge drops, tight hairpins. Trees only on
+   the lower final sectors. */
+function segsDiamondback() {
+  const { SEGS, S, slalomRun } = segList();
+  // winding open chains: relentless direction changes — nowhere to just tuck
+  const windRun = (count, period, amp, grade, w) => {
+    let a = -amp;
+    for (let i = 0; i < count; i++) { S(period, a, grade, w, ST_OPEN); a = -a; }
+  };
+  // SECTOR 1 — summit ice field
+  S(70, 0, .16, 11);                       // out of the gate, wind-scoured
+  windRun(5, 42, 39, .20, 10);             // exposed winding steeps
+  S(60, -10, .19, 10);
+  S(100, -10, .15, 10, ST_MOGUL);          // MOGUL FIELD 1 (the taster)
+  windRun(3, 42, 37, .19, 10);
+  S(80, 0, .17, 10, ST_OPEN, { gate: 1 }); // GATE 1
+  // SECTOR 2 — the first chute
+  S(65, 25, .16, 9);
+  S(65, 8, .28, 5.8, ST_CHUTE, { drop: 1 }); // CHUTE 1 — chevroned drop-in
+  S(60, -14, .27, 5.8, ST_CHUTE);          // kinked granite corridor
+  S(45, 34, .20, 10);
+  S(45, -6, .20, 10);
+  S(55, -110, .105, 9, ST_HAIRPIN);        // HAIRPIN 1 — very tight (140°)
+  S(45, -62, .20, 10);
+  S(45, -20, .21, 10);
+  S(85, -52, .23, 10, ST_OPEN, { ramp: 1 }); // RAMP 1
+  S(80, -25, .18, 10, ST_OPEN, { gate: 1 }); // GATE 2
+  // SECTOR 3 — the long mogul run
+  S(60, 0, .18, 10);
+  S(185, 8, .15, 10, ST_MOGUL);            // MOGUL FIELD 2
+  windRun(4, 42, 39, .20, 10);
+  S(75, 10, .18, 10, ST_OPEN, { gate: 1 }); // GATE 3
+  // SECTOR 4 — second chute + the first ledge
+  S(60, -15, .17, 9.5);
+  S(70, -30, .27, 6.5, ST_CHUTE, { drop: 1 }); // CHUTE 2
+  S(65, -8, .26, 6.5, ST_CHUTE);
+  S(45, -38, .20, 10);
+  S(45, -10, .20, 10);
+  S(95, -30, .26, 10, ST_OPEN, { drop: 2 }); // LEDGE DROP 1 — mandatory air
+  S(55, 100, .10, 9, ST_HAIRPIN);          // HAIRPIN 2 — full switchback (130°)
+  S(45, 62, .17, 10);
+  S(45, 28, .18, 10);
+  S(70, 45, .18, 10, ST_OPEN, { gate: 1 }); // GATE 4
+  // SECTOR 5 — mogul crux + the second ledge
+  windRun(3, 42, 38, .20, 10);
+  S(210, 4, .15, 10, ST_MOGUL);            // MOGUL FIELD 3 (the crux)
+  S(45, -34, .20, 10);
+  S(45, -12, .20, 10);
+  S(90, -18, .25, 10, ST_OPEN, { drop: 2 }); // LEDGE DROP 2
+  S(100, 10, .22, 10, ST_OPEN, { ramp: 1 }); // RAMP 2
+  S(75, 0, .18, 10, ST_OPEN, { gate: 1 }); // GATE 5
+  // SECTOR 6 — down into the trees at last
+  S(50, 24, .13, 8.5, ST_SLALOM);
+  slalomRun(6, 30, 27, .13, 7.5, 1);       // sheltered woods — HIDDEN SHORTCUT
+  S(70, -55, .14, 9);
+  S(60, 52, .10, 9, ST_HAIRPIN);           // HAIRPIN 3
+  slalomRun(5, 30, 24, .14, 8);            // boulder-garden slalom
+  S(90, 12, .22, 10, ST_OPEN, { ramp: 1 }); // RAMP 3
+  windRun(2, 45, 33, .22, 11);
+  S(170, -4, .27, 12, ST_OPEN, { ramp: 1 }); // RAMP 4 — the storm schuss
+  S(120, 2, .22, 13, ST_OPEN, { fin: 1 }); // FINISH at end of this one
+  S(160, 0, .09, 15);                      // run-out (void fix)
+  S(160, -5, .055, 16);
+  S(150, -5, .04, 17);
   return SEGS;
 }
 
@@ -190,7 +267,43 @@ const MTN = {
     peakCol: [0.52, 0.57, 0.85],
     lightSun: 0xbfd0ff, lightSky: 0x8090d8, lightGnd: 0x2a3060, lightInt: 0.9,
   },
+  /* DIAMONDBACK — high alpine double black. Steel-grey storm sky, flat cold
+     light, exposed granite, wind-blown spindrift. The cold, serious one. */
+  db: {
+    id: 'db', name: 'DIAMONDBACK', seed: 20260811,
+    tag: '◆◆ EXPERT',
+    bestKey: 'powderpeak_best_db',
+    // calibrated from the harness race bot (`time db`: 218s clean, ±0.6s):
+    // bot ≈ 20% over gold; silver = gold x1.18, bronze = gold x1.50
+    medals: { gold: 182, silver: 215, bronze: 273 },
+    origin: { x: 24000, z: 0 },
+    segs: segsDiamondback(),
+    night: false,
+    // icy exposed snowpack: less carve bite than ALPENGLOW (nr precedent)
+    phys: { cdRun: 0.0047, cdTuck: 0.0020, tuckAccel: 0.85, carve: 0.024, brake: 4.1 },
+    sc: { side: 1, off: 20, w: 4.0 },
+    smSide: -1,
+    mogulAmp: 0.52,                 // bump lattice amplitude (m) — see terrainInfo
+    treeFrom: 0.68,                 // trees only below 68% of the run
+    rockEvery: 7,                   // granite boulders come thick up high
+    rockNy: 0.74,                   // slopes go bare-rock sooner than the others
+    rockPatch: 0.34,                // off-piste wind-scoured rock patches
+    spindrift: true,                // baked wind streaks on the snow
+    fog: [0.585, 0.615, 0.665], fogNear: 74, fogFar: 360,
+    skyStops: [
+      [-1.0, 0.36, 0.39, 0.44], [0.0, 0.55, 0.58, 0.63], [0.07, 0.48, 0.52, 0.58],
+      [0.24, 0.42, 0.46, 0.54], [0.5, 0.34, 0.38, 0.47], [1.0, 0.27, 0.30, 0.39],
+    ],
+    sunDir: [0.30, 0.34, -0.89], sunR: 40, sunCol: 0xdfe5ee,   // a pale smear
+    haloR: 120, haloCol: 0x9aa6b8, haloOp: 0.16,
+    cloudCol: [0.44, 0.47, 0.53],
+    peakCol: [0.56, 0.58, 0.66],
+    lightSun: 0xdde3ec, lightSky: 0xa8b2c4, lightGnd: 0x6d7585, lightInt: 0.88,
+  },
 };
+/* mountain order everywhere (select cards, world build, bests). Adding a
+   4th mountain = a cfg above + a slot here. */
+const MTN_ORDER = ['alp', 'nr', 'db'];
 
 /* ─────────── baked-light shading, one flavor per mountain ─────────── */
 // ALPENGLOW: cool violet shadows → warm peach light
@@ -218,8 +331,19 @@ function shadeFlat(nx, ny, nz, r, g, b, out, o) {
   const f = 0.82 + 0.20 * Math.max(0, ny);
   out[o] = Math.min(1, r * f); out[o + 1] = Math.min(1, g * f); out[o + 2] = Math.min(1, b * f);
 }
+// DIAMONDBACK: flat storm light — low contrast, cold neutral greys
+const DBX = 0.28, DBY = 0.80, DBZ = -0.53;
+function shadeDb(nx, ny, nz, r, g, b, out, o) {
+  let d = nx * DBX + ny * DBY + nz * DBZ;
+  if (d < 0) d = 0;
+  const l = 0.60 + 0.30 * d;
+  out[o] = Math.min(1, r * l * (0.90 + 0.08 * d));
+  out[o + 1] = Math.min(1, g * l * (0.93 + 0.06 * d));
+  out[o + 2] = Math.min(1, b * l * (1.02 + 0.04 * d));
+}
 MTN.alp.shade = shadeAlp;
 MTN.nr.shade = shadeNight;
+MTN.db.shade = shadeDb;
 
 /* ═══════════════ buildCourseData(cfg) — everything data-side ═══════════════
    Integrates the segment recipe into dense samples, carves the hidden
@@ -239,7 +363,7 @@ function buildCourseData(cfg) {
   const mCURV = new Float64Array(NSM), mW = new Float64Array(NSM);
   const mBANK = new Float64Array(NSM), mWL = new Float64Array(NSM), mWR = new Float64Array(NSM);
   const mSTYLE = new Uint8Array(NSM), mRAMP = new Float64Array(NSM);
-  const GATES = [], RAMPS = [];
+  const GATES = [], RAMPS = [], DROPS = [], DROPV = [];
   let FINISH_I = NSM - 1;
   let scStart = -1, scEnd = -1;
   {
@@ -265,6 +389,7 @@ function buildCourseData(cfg) {
         twl = right ? 0.95 : 0.22; twr = right ? 0.22 : 0.95;
       }
       else if (sg.style === ST_SLALOM) { twl = 0.34; twr = 0.34; }
+      else if (sg.style === ST_CHUTE) { twl = 1.9; twr = 1.9; }   // granite walls
       else { twl = 0.55; twr = 0.55; }
       wl += (twl - wl) * (STEP / 18);
       wr += (twr - wr) * (STEP / 18);
@@ -287,8 +412,13 @@ function buildCourseData(cfg) {
       if (segS >= sg.len) {
         if (sg.gate) GATES.push(i - 1);
         if (sg.ramp) RAMPS.push(i - 2);
-        if (seg === SEGS.length - 2) FINISH_I = i - 1;
+        if (sg.fin) FINISH_I = i - 1;
         segS -= sg.len; segStartHdg = sg.hdg; seg++;
+        // ledge drops & chute drop-ins: a sharp step down in the centreline
+        // at the NEXT segment's start (both mesh AND physics read it via
+        // terrainInfo — the "ground fell away" rule turns it into real air)
+        const ns = SEGS[seg];
+        if (ns && ns.drop) { y -= ns.drop >= 2 ? 6.0 : 3.2; DROPS.push(i); DROPV.push(ns.drop); }
       }
     }
     // smooth centreline height a touch (kills any integration kinks)
@@ -302,6 +432,25 @@ function buildCourseData(cfg) {
         if (idx < 0 || idx >= NSM) continue;
         const t = (idx - (li - 16 / STEP)) / (16 / STEP);
         mRAMP[idx] = 2.3 * t * t * t;
+      }
+    }
+  }
+
+  /* mogul-field amplitude envelope: per-sample bump amplitude, eased in and
+     out over ~15 m at each field edge so the lattice never pops */
+  const mMOG = new Float64Array(NSM);
+  if (cfg.mogulAmp) {
+    let runStart = -1;
+    for (let i = 0; i <= NSM; i++) {
+      const on = i < NSM && mSTYLE[i] === ST_MOGUL;
+      if (on && runStart < 0) runStart = i;
+      if (!on && runStart >= 0) {
+        const runEnd = i - 1;
+        for (let j = runStart; j <= runEnd; j++) {
+          const e = Math.min(1, Math.min(j - runStart, runEnd - j) / 5);
+          mMOG[j] = cfg.mogulAmp * smoothstep(e);
+        }
+        runStart = -1;
       }
     }
   }
@@ -368,12 +517,13 @@ function buildCourseData(cfg) {
   const CBANK = new Float32Array(NS), CRAMP = new Float32Array(NS);
   const CWL = new Float32Array(NS), CWR = new Float32Array(NS);
   const CSTYLE = new Uint8Array(NS), CSC = new Uint8Array(NS);
+  const CMOG = new Float32Array(NS);
   for (let i = 0; i < NSM; i++) {
     CX[i] = mCX[i]; CZ[i] = mCZ[i]; CY[i] = mCY[i];
     CDX[i] = mDX[i]; CDZ[i] = mDZ[i];
     CRX[i] = mDZ[i]; CRZ[i] = -mDX[i];
     CCURV[i] = mCURV[i]; CW[i] = mW[i]; CBANK[i] = mBANK[i]; CRAMP[i] = mRAMP[i];
-    CWL[i] = mWL[i]; CWR[i] = mWR[i]; CSTYLE[i] = mSTYLE[i];
+    CWL[i] = mWL[i]; CWR[i] = mWR[i]; CSTYLE[i] = mSTYLE[i]; CMOG[i] = mMOG[i];
   }
   for (let k = 0; k < NSC; k++) {
     const i = NSM + k;
@@ -442,6 +592,13 @@ function buildCourseData(cfg) {
     y += env * (nA * 1.7 + nB * 3.1);
     return y;
   }
+  /* MOGUL LATTICE — a fixed analytic world-space bump field (staggered
+     checkerboard, λ ≈ 3.4 x 3.0 m). It rides on the SAME blended height both
+     the terrain mesh and the physics read, weighted by each contributing
+     sample's field envelope and faded out at the groom edge — visual bumps
+     and physical bumps are one function, by construction. */
+  const MOG_C = Math.cos(0.43), MOG_S = Math.sin(0.43);
+  const MOG_KA = Math.PI * 2 / 3.4, MOG_KB = Math.PI * 2 / 3.0;
   const TI = { h: 0, i: 0, u: 0, d: 1e9 };
   function terrainInfo(x, z) {
     const nA = noise2(x * 0.09, z * 0.09);
@@ -450,7 +607,7 @@ function buildCourseData(cfg) {
     const cx1 = Math.min(HW - 1, Math.floor((x + R_LAT - HX0) / HCELL));
     const cz0 = Math.max(0, Math.floor((z - R_LAT - HZ0) / HCELL));
     const cz1 = Math.min(HH - 1, Math.floor((z + R_LAT - HZ0) / HCELL));
-    let sw = 0, sy = 0, best = -1, bestD = 1e9, bestU = 0;
+    let sw = 0, sy = 0, sm = 0, best = -1, bestD = 1e9, bestU = 0;
     for (let cz = cz0; cz <= cz1; cz++) {
       for (let cx = cx0; cx <= cx1; cx++) {
         const c = cz * HW + cx;
@@ -465,11 +622,24 @@ function buildCourseData(cfg) {
           let wgt = 1 - de / reach;
           wgt = wgt * wgt; wgt = wgt * wgt * wgt;      // ^6: nearest dominates
           sw += wgt; sy += wgt * profileY(j, u, nA, nB);
+          if (CMOG[j] > 0) {
+            const au = u < 0 ? -u : u;
+            const w = CW[j];
+            const lat = au < w - 1.4 ? 1 : au < w + 0.6 ? (w + 0.6 - au) * 0.5 : 0;
+            if (lat > 0) sm += wgt * CMOG[j] * lat;
+          }
           if (de < bestD) { bestD = de; best = j; bestU = u; }
         }
       }
     }
-    if (sw > 0) { TI.h = sy / sw; TI.i = best; TI.u = bestU; TI.d = bestD; }
+    if (sw > 0) {
+      let h = sy / sw;
+      if (sm > 0) {
+        const xr = x * MOG_C - z * MOG_S, zr = x * MOG_S + z * MOG_C;
+        h += (sm / sw) * Math.sin(xr * MOG_KA) * Math.sin(zr * MOG_KB);
+      }
+      TI.h = h; TI.i = best; TI.u = bestU; TI.d = bestD;
+    }
     else { TI.h = 500; TI.i = -1; TI.u = 0; TI.d = 1e9; }
     return TI;
   }
@@ -484,10 +654,33 @@ function buildCourseData(cfg) {
     return GRAD;
   }
 
+  /* course feature ranges (harness targeting + drop chevrons) */
+  const FEATS = { moguls: [], chutes: [], drops: [] };
+  {
+    let rs = -1, rw = 1e9, rst = 0;
+    const close = (endI) => {
+      if (rs < 0) return;
+      const rec = { s0: rs * STEP, s1: endI * STEP, len: (endI - rs) * STEP, w: Math.round(rw * 10) / 10 };
+      if (rst === ST_MOGUL) FEATS.moguls.push(rec);
+      else FEATS.chutes.push(rec);
+      rs = -1; rw = 1e9;
+    };
+    for (let i = 0; i <= NSM; i++) {
+      const st = i < NSM ? mSTYLE[i] : -1;
+      const feat = st === ST_MOGUL || st === ST_CHUTE;
+      if (feat && rs < 0) { rs = i; rst = st; }
+      else if (rs >= 0 && st !== rst) { close(i - 1); if (feat) { rs = i; rst = st; } }
+      if (rs >= 0 && i < NSM && mW[i] < rw) rw = mW[i];
+    }
+    for (let k = 0; k < DROPS.length; k++) {
+      FEATS.drops.push({ s: DROPS[k] * STEP, big: DROPV[k] >= 2 });
+    }
+  }
+
   return {
     cfg, STEP, NSM, NS, NSC, COURSE_LEN,
-    CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE, CSC,
-    GATES, RAMPS, FINISH_I, SC,
+    CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE, CSC, CMOG,
+    GATES, RAMPS, DROPS, FEATS, FINISH_I, SC,
     HX0, HZ0, HX1, HZ1,
     terrainInfo, terrainH, terrainGrad,
     hash2, noise2,

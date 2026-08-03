@@ -217,10 +217,11 @@
     text-align: center; line-height: 1.9;
   }
 
-  /* ── mountain select ── */
+  /* ── mountain select — an N-card row (slides to center if it outgrows
+        the stage; 3 cards fit 1280 statically) ── */
   #selectScreen {
     position: absolute; inset: 0;
-    display: none; align-items: center; justify-content: center; gap: 60px;
+    display: none; align-items: center; justify-content: center;
   }
   body.st-select #selectScreen { display: flex; }
   #selectTitle {
@@ -228,20 +229,31 @@
     font-size: 28px; letter-spacing: 10px; font-weight: 700; color: #fff;
     text-shadow: 0 3px 0 #20233d;
   }
+  #mcardRow {
+    display: flex; gap: 36px;
+    will-change: transform;
+    transition: transform 0.22s ease;
+  }
   .mcard {
-    width: 384px; background: #20233d; border: 3px solid #12142a;
-    padding: 14px 14px 10px; text-align: center;
+    width: 350px; background: #20233d; border: 3px solid #12142a;
+    padding: 13px 14px 10px; text-align: center;
     transform: skewX(-4deg); opacity: 0.68;
+    flex: none;
   }
   .mcard > * { transform: skewX(4deg); }
   .mcard.sel { opacity: 1; border-color: #ffd23e; }
   .mcard .mname {
-    font-size: 21px; font-weight: 700; letter-spacing: 5px; color: #fff;
-    margin-bottom: 10px;
+    font-size: 19px; font-weight: 700; letter-spacing: 4px; color: #fff;
+    margin-bottom: 9px;
   }
   .mcard.sel .mname { color: #ffd23e; }
   .mcard.sel .mname::before { content: '▶ '; color: #ff5964; }
-  .mcard canvas { width: 348px; height: 196px; background: #171930; display: block; margin: 0 auto; }
+  .mcard .mtag {
+    display: block;
+    font-size: 10px; letter-spacing: 3px; font-weight: 700; color: #9aa0c0;
+    margin-top: 3px;
+  }
+  .mcard canvas { width: 316px; height: 178px; background: #171930; display: block; margin: 0 auto; }
   .mcard .mbest { margin-top: 10px; font-size: 14px; font-weight: 700; letter-spacing: 2px; color: #e8ecff; }
   .mmedal { margin-top: 2px; height: 18px; font-size: 13px; font-weight: 700; letter-spacing: 3px; color: #9aa0c0; }
   .mmedal.gold { color: #ffd23e; } .mmedal.silver { color: #d8dce8; } .mmedal.bronze { color: #e8945a; }
@@ -486,7 +498,7 @@
     <div id="splitPop"></div>
 
     <div id="sectorPanel" class="panel">
-      <span>SECTOR <span class="big" id="sectorNum">1</span>/4</span>
+      <span>SECTOR <span class="big" id="sectorNum">1</span>/<span id="sectorTot">4</span></span>
       <div class="row2">BEST <b id="bestChip">--:--.--</b></div>
     </div>
 
@@ -508,8 +520,8 @@
       <div class="rgap" id="rgap1"></div>
       <div class="rspeed panel" id="rsp0"><span class="rnum" id="rnum0">0</span><span class="runit">KM/H</span></div>
       <div class="rspeed panel" id="rsp1"><span class="rnum" id="rnum1">0</span><span class="runit">KM/H</span></div>
-      <div class="rsec panel" id="rsec0">SECTOR <span class="big" id="rsecN0">1</span>/4</div>
-      <div class="rsec panel" id="rsec1">SECTOR <span class="big" id="rsecN1">1</span>/4</div>
+      <div class="rsec panel" id="rsec0">SECTOR <span class="big" id="rsecN0">1</span>/<span id="rsecT0">4</span></div>
+      <div class="rsec panel" id="rsec1">SECTOR <span class="big" id="rsecN1">1</span>/<span id="rsecT1">4</span></div>
       <div class="rtrickpop panel" id="rtp0"></div>
       <div class="rtrickpop panel" id="rtp1"></div>
       <div class="rbanner panel" id="rban0"></div>
@@ -529,20 +541,7 @@
 
   <div id="selectScreen">
     <div id="selectTitle">CHOOSE YOUR MOUNTAIN</div>
-    <div class="mcard sel" id="mcard0">
-      <div class="mname">ALPENGLOW</div>
-      <canvas id="mthumb0" width="348" height="196"></canvas>
-      <div class="mbest" id="mbest0"></div>
-      <div class="mmedal" id="mmedal0"></div>
-      <div class="pchips"><span class="chip c1">P1</span><span class="chip c2">P2</span></div>
-    </div>
-    <div class="mcard" id="mcard1">
-      <div class="mname">NIGHT RIDGE</div>
-      <canvas id="mthumb1" width="348" height="196"></canvas>
-      <div class="mbest" id="mbest1"></div>
-      <div class="mmedal" id="mmedal1"></div>
-      <div class="pchips"><span class="chip c1">P1</span><span class="chip c2">P2</span></div>
-    </div>
+    <div id="mcardRow"></div><!-- cards built from MTN_ORDER at boot -->
     <div id="selectHint">◄ ► CHOOSE · ✕ SKI · ○ BACK</div>
     <div id="p2Prompt">P2 PRESS ✕ TO JOIN</div>
   </div>

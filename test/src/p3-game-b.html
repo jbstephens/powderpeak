@@ -166,7 +166,7 @@ function panelBar(md, o, ax, ay, az, bx, by, bz, x1, y1, x2, y2, hw, r, g, b, nx
 function buildWorldScene(W) {
   const cfg = W.cfg;
   const { NSM, NS, STEP, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CW, CWL, CWR, CSTYLE, CRAMP, CSC,
-    GATES, RAMPS, FINISH_I, SC, terrainH, terrainInfo, hash2, noise2 } = W;
+    CMOG, GATES, RAMPS, DROPS, FINISH_I, SC, terrainH, terrainInfo, hash2, noise2 } = W;
   const R_LAT = 76;
 
   /* ── terrain tiles, everything merged in ── */
@@ -175,11 +175,16 @@ function buildWorldScene(W) {
   const TGW = Math.ceil((W.HX1 - W.HX0) / TILE) + 1, TGH = Math.ceil((W.HZ1 - W.HZ0) / TILE) + 1;
   const tileMDs = new Array(TGW * TGH).fill(null);
   const tileHasCourse = new Uint8Array(TGW * TGH);
+  const tileMinI = new Int32Array(TGW * TGH).fill(0x7fffffff);
   for (let i = 0; i < NSM; i++) {
     const tx0 = Math.floor((CX[i] - R_LAT) / TILE) - TGX0, tx1 = Math.floor((CX[i] + R_LAT) / TILE) - TGX0;
     const tz0 = Math.floor((CZ[i] - R_LAT) / TILE) - TGZ0, tz1 = Math.floor((CZ[i] + R_LAT) / TILE) - TGZ0;
     for (let tz = tz0; tz <= tz1; tz++) for (let tx = tx0; tx <= tx1; tx++) {
-      if (tx >= 0 && tz >= 0 && tx < TGW && tz < TGH) tileHasCourse[tz * TGW + tx] = 1;
+      if (tx >= 0 && tz >= 0 && tx < TGW && tz < TGH) {
+        const c = tz * TGW + tx;
+        tileHasCourse[c] = 1;
+        if (i < tileMinI[c]) tileMinI[c] = i;
+      }
     }
   }
   function tileMD(tx, tz) {
@@ -196,15 +201,30 @@ function buildWorldScene(W) {
   // face palette for the mountain (same albedos both mountains — the bake
   // fn turns them warm or moonlit). Shortcut corridor snow gets a faint
   // packed tint + twin old-ski-track grooves, blended in from the entry.
+  const ROCK_NY = cfg.rockNy || 0.62;
+  // DIAMONDBACK spindrift: baked wind-blown streaks across the snow —
+  // anisotropic noise, brighter crests and faintly blued troughs
+  function spindrift(fx, fz) {
+    if (!cfg.spindrift) return 0;
+    return clamp(noise2(fx * 0.055 + fz * 0.46, fz * 0.026), -1, 1) * 0.045;
+  }
   function terrainColor(domI, u, ny, fx, fz, out) {
     const w = CW[domI], au = u < 0 ? -u : u;
     const jit = hash2(Math.floor(fx * 2.1), Math.floor(fz * 2.1)) * 0.014;
-    if (ny < 0.62) { // steep = bare rock, dusted with snow as it flattens
+    if (ny < ROCK_NY) { // steep = bare rock, dusted with snow as it flattens
       const n = noise2(fx * 0.13, fz * 0.13) * 0.05;
-      const dust = clamp((ny - 0.45) * 2.2, 0, 0.55);
+      const dust = clamp((ny - (ROCK_NY - 0.17)) * 2.2, 0, 0.55);
       out[0] = lerp(0.36 + n, 0.88, dust) + jit;
       out[1] = lerp(0.35 + n, 0.90, dust) + jit;
       out[2] = lerp(0.42 + n, 0.99, dust) + jit;
+      return;
+    }
+    // DIAMONDBACK: wind-scoured granite patches off-piste — more exposed
+    // rock than snow through the hard upper sections
+    if (cfg.rockPatch && au > w + 1.5 &&
+        noise2(fx * 0.055 + 9.1, fz * 0.055 - 4.2) > cfg.rockPatch) {
+      const n = noise2(fx * 0.13, fz * 0.13) * 0.05;
+      out[0] = 0.385 + n + jit; out[1] = 0.38 + n + jit; out[2] = 0.44 + n + jit;
       return;
     }
     if (CSC[domI]) { // hidden-shortcut corridor: powder, quietly tracked
@@ -228,30 +248,51 @@ function buildWorldScene(W) {
       return;
     }
     if (au <= w) { // groomed piste — bright, faint corduroy stripes
+      const sd = spindrift(fx, fz);
       const cord = 0.03 * Math.sin(u * 2.5);
-      let r = 0.955 + cord + jit, g = 0.968 + cord + jit, b = 1.0;
+      let r = 0.955 + cord + jit + sd, g = 0.968 + cord + jit + sd, b = 1.0;
+      if (CMOG[domI] > 0) { r -= 0.045; g -= 0.02; }                         // chopped-up mogul snow
       if (CRAMP[domI] > 0.15 && au < 5.4) { r = 0.855; g = 0.935; b = 1.0; } // sculpted kicker
       if (au > w - 0.7) { r -= 0.13; g -= 0.08; }                            // groom edge
       out[0] = r; out[1] = g; out[2] = b;
       return;
     }
     // off-piste powder: bluer, softer, wind-shaped patches
+    const sd = spindrift(fx, fz);
     const k = clamp(noise2(fx * 0.045, fz * 0.045), 0, 1) * 0.55;
-    out[0] = lerp(0.865, 0.735, k) + jit;
-    out[1] = lerp(0.905, 0.815, k) + jit;
+    out[0] = lerp(0.865, 0.735, k) + jit + sd;
+    out[1] = lerp(0.905, 0.815, k) + jit + sd;
     out[2] = 1.0;
   }
 
   (function buildTerrain() {
-    const NV = Math.round(TILE / TRES) + 1;
-    const hs = new Float32Array(NV * NV), us = new Float32Array(NV * NV);
-    const ds = new Float32Array(NV * NV); const dom = new Int32Array(NV * NV);
+    const NVF = Math.round(TILE / TRES) + 1;      // fine grid (course tiles)
+    const hs = new Float32Array(NVF * NVF), us = new Float32Array(NVF * NVF);
+    const ds = new Float32Array(NVF * NVF); const dom = new Int32Array(NVF * NVF);
     const col = [0, 0, 0];
+    // shaded+colored tri via the dominant sample (shared by base + subdiv)
+    function terrTri(md, domI, uu, ax, ay, az, bx2, by, bz, cx2, cy2, cz2) {
+      const ux = bx2 - ax, uy = by - ay, uz = bz - az;
+      const vx2 = cx2 - ax, vy2 = cy2 - ay, vz2 = cz2 - az;
+      const ny = uz * vx2 - ux * vz2;
+      const nx = uy * vz2 - uz * vy2, nz = ux * vy2 - uy * vx2;
+      const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+      const nyn = Math.abs(ny / nl);
+      terrainColor(domI, uu, nyn, (ax + bx2 + cx2) / 3, (az + bz + cz2) / 3, col);
+      pushTri(md, ax, ay, az, bx2, by, bz, cx2, cy2, cz2, col[0], col[1], col[2], 0, 1, 0);
+    }
+    const SUB = 3;                                 // mogul quads split 3x3
+    const hsub = new Float32Array((SUB + 1) * (SUB + 1));
     for (let tz = 0; tz < TGH; tz++) for (let tx = 0; tx < TGW; tx++) {
-      if (!tileHasCourse[tz * TGW + tx]) continue;
+      const cIdx = tz * TGW + tx;
+      if (!tileHasCourse[cIdx]) continue;
+      // run-out tiles are scenery only — build them at half resolution
+      const coarse = tileMinI[cIdx] > FINISH_I + 12;
+      const res = coarse ? TRES * 2 : TRES;
+      const NV = Math.round(TILE / res) + 1;
       const ox = (TGX0 + tx) * TILE, oz = (TGZ0 + tz) * TILE;
       for (let vz = 0; vz < NV; vz++) for (let vx = 0; vx < NV; vx++) {
-        const ti = terrainInfo(ox + vx * TRES, oz + vz * TRES);
+        const ti = terrainInfo(ox + vx * res, oz + vz * res);
         const n = vz * NV + vx;
         hs[n] = ti.h; us[n] = ti.u; ds[n] = ti.d; dom[n] = ti.i;
       }
@@ -259,24 +300,33 @@ function buildWorldScene(W) {
       for (let vz = 0; vz < NV - 1; vz++) for (let vx = 0; vx < NV - 1; vx++) {
         const n00 = vz * NV + vx, n10 = n00 + 1, n01 = n00 + NV, n11 = n01 + 1;
         if (ds[n00] > 70 || ds[n10] > 70 || ds[n01] > 70 || ds[n11] > 70) continue;
-        const x0 = ox + vx * TRES, x1 = x0 + TRES;
-        const z0 = oz + vz * TRES, z1 = z0 + TRES;
+        const x0 = ox + vx * res, x1 = x0 + res;
+        const z0 = oz + vz * res, z1 = z0 + res;
         let bn = n00;
         if (ds[n10] < ds[bn]) bn = n10;
         if (ds[n01] < ds[bn]) bn = n01;
         if (ds[n11] < ds[bn]) bn = n11;
+        // MOGUL FIELDS: the λ≈3m bump lattice needs finer-than-TRES faces to
+        // read on screen — same terrainInfo the physics uses, just denser
+        if (!coarse && CMOG[dom[bn]] > 0 && ds[bn] < 30 && Math.abs(us[bn]) < CW[dom[bn]] + 4) {
+          const ss = res / SUB;
+          for (let mz = 0; mz <= SUB; mz++) for (let mx = 0; mx <= SUB; mx++) {
+            hsub[mz * (SUB + 1) + mx] = terrainInfo(x0 + mx * ss, z0 + mz * ss).h;
+          }
+          for (let mz = 0; mz < SUB; mz++) for (let mx = 0; mx < SUB; mx++) {
+            const ax0 = x0 + mx * ss, az0 = z0 + mz * ss;
+            const h00 = hsub[mz * (SUB + 1) + mx], h10 = hsub[mz * (SUB + 1) + mx + 1];
+            const h01 = hsub[(mz + 1) * (SUB + 1) + mx], h11 = hsub[(mz + 1) * (SUB + 1) + mx + 1];
+            terrTri(md, dom[bn], us[bn], ax0, h00, az0, ax0 + ss, h10, az0, ax0 + ss, h11, az0 + ss);
+            terrTri(md, dom[bn], us[bn], ax0, h00, az0, ax0 + ss, h11, az0 + ss, ax0, h01, az0 + ss);
+          }
+          continue;
+        }
         for (let t = 0; t < 2; t++) {
           const ax = x0, ay = hs[n00], az = z0;
           const bx2 = t === 0 ? x1 : x1, by = t === 0 ? hs[n10] : hs[n11], bz = t === 0 ? z0 : z1;
           const cx2 = t === 0 ? x1 : x0, cy2 = t === 0 ? hs[n11] : hs[n01], cz2 = t === 0 ? z1 : z1;
-          let ux = bx2 - ax, uy = by - ay, uz = bz - az;
-          let vx2 = cx2 - ax, vy2 = cy2 - ay, vz2 = cz2 - az;
-          let ny = uz * vx2 - ux * vz2;
-          const nx = uy * vz2 - uz * vy2, nz = ux * vy2 - uy * vx2;
-          const nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
-          let nyn = Math.abs(ny / nl);
-          terrainColor(dom[bn], us[bn], nyn, (ax + bx2 + cx2) / 3, (az + bz + cz2) / 3, col);
-          pushTri(md, ax, ay, az, bx2, by, bz, cx2, cy2, cz2, col[0], col[1], col[2], 0, 1, 0);
+          terrTri(md, dom[bn], us[bn], ax, ay, az, bx2, by, bz, cx2, cy2, cz2);
         }
       }
     }
@@ -306,9 +356,13 @@ function buildWorldScene(W) {
 
   (function plantForest() {
     const rr = mulberry32(cfg.seed ^ 0x5eed);
+    // DIAMONDBACK is above the treeline: forest only below cfg.treeFrom,
+    // and the run-out fades its scenery density out naturally
+    const treeFromI = Math.floor(FINISH_I * (cfg.treeFrom || 0));
     let sinceGate = 0, side = 1;
     for (let i = 4; i < NSM - 8; i++) {
       const st = CSTYLE[i];
+      const runoutThin = i > FINISH_I ? (i - FINISH_I) * STEP / 250 : 0;
       sinceGate += STEP;
       if (st === ST_SLALOM && sinceGate > 24) {
         sinceGate = 0; side = -side;
@@ -321,11 +375,11 @@ function buildWorldScene(W) {
         }
       }
       // forest bands beside the course
-      if (i % 2 === 0) {
+      if (i % 2 === 0 && i >= treeFromI && st !== ST_CHUTE) {
         for (let sgn = -1; sgn <= 1; sgn += 2) {
           const wall = sgn < 0 ? CWL[i] : CWR[i];
           if (wall < 0) continue;
-          const dens = st === ST_SLALOM ? 0.30 : st === ST_OPEN ? 0.52 : 0.44;
+          const dens = (st === ST_SLALOM ? 0.30 : st === ST_OPEN ? 0.52 : 0.44) + runoutThin;
           for (let k = 0; k < 4; k++) {
             const u = sgn * (CW[i] + 5 + k * 13 + rr() * 9);
             const x = CX[i] + CRX[i] * u + (rr() - 0.5) * 4;
@@ -344,8 +398,9 @@ function buildWorldScene(W) {
           }
         }
       }
-      // scattered boulders
-      if (i % 13 === 0 && st !== ST_RIDGE) {
+      // scattered boulders (thick granite up high on DIAMONDBACK)
+      const rockMod = (cfg.rockEvery && i < treeFromI) ? cfg.rockEvery : 13;
+      if (i % rockMod === 0 && st !== ST_RIDGE && st !== ST_CHUTE) {
         const sgn = rr() < 0.5 ? -1 : 1;
         if ((sgn < 0 ? CWL[i] : CWR[i]) >= 0) {
           const u = sgn * (CW[i] + 2.5 + rr() * 13);
@@ -365,7 +420,7 @@ function buildWorldScene(W) {
       // piste edge stakes (skip in the tree slaloms — trees mark the line).
       // Near the shortcut a deliberate GAP is left in the stake line: the
       // only signpost the corridor ever gets.
-      if (i % 5 === 0 && st !== ST_SLALOM) {
+      if (i % 5 === 0 && st !== ST_SLALOM && st !== ST_CHUTE) {
         for (let sgn = -1; sgn <= 1; sgn += 2) {
           if (SC && sgn === SC.side && Math.abs(i - (SC.entryI + 8)) <= 5) continue; // the gap
           const u = sgn * (CW[i] + 0.7);
@@ -432,8 +487,29 @@ function buildWorldScene(W) {
     }
   })();
 
-  /* chevron warning signs at every hairpin entry */
+  /* chevron warning signs — hairpin entries, chute drop-ins, ledge drops */
   (function placeChevrons() {
+    // one orange chevron board planted at sample k, lateral offset u,
+    // chevrons pointing dir (+1 right / -1 left), facing back uphill
+    function warnBoard(k, u, dir) {
+      const x = CX[k] + CRX[k] * u, z = CZ[k] + CRZ[k] * u;
+      const gy = terrainH(x, z);
+      const md = tileMDAt(x, z);
+      const ax = CRX[k], az = CRZ[k];
+      const nx = -CDX[k], nz = -CDZ[k];
+      pushBox(md, x - ax * 1.35, gy + 1.0, z - az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+      pushBox(md, x + ax * 1.35, gy + 1.0, z + az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
+      const o = [x, gy + 2.0, z];
+      panelBar(md, o, ax, 0, az, 0, 1, 0, -1.62, 0, 1.62, 0, 0.72, 0.125, 0.135, 0.24, nx, 0, nz);
+      const o2 = [x + nx * 0.05, gy + 2.0, z + nz * 0.05];
+      panelBar(md, o2, ax, 0, az, 0, 1, 0, -1.5, 0, 1.5, 0, 0.6, 0.96, 0.30, 0.10, nx, 0, nz);
+      for (let cvi = 0; cvi < 3; cvi++) {
+        const cx0 = (cvi - 1) * 0.88 * dir;
+        const o3 = [x + nx * 0.10, gy + 2.0, z + nz * 0.10];
+        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 - 0.22 * dir, 0.36, cx0 + 0.22 * dir, 0.02, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+        panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 + 0.22 * dir, 0.02, cx0 - 0.22 * dir, -0.34, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
+      }
+    }
     let i = 0;
     while (i < NSM) {
       if (CSTYLE[i] !== ST_HAIRPIN) { i++; continue; }
@@ -443,27 +519,15 @@ function buildWorldScene(W) {
       const outer = turnRight ? -1 : 1;
       for (const off of [-6, Math.floor((j - i) * 0.35)]) {
         const k = clamp(i + off, 2, NSM - 3);
-        const u = outer * (CW[k] + 3.2);
-        const x = CX[k] + CRX[k] * u, z = CZ[k] + CRZ[k] * u;
-        const gy = terrainH(x, z);
-        const md = tileMDAt(x, z);
-        const ax = CRX[k], az = CRZ[k];
-        const nx = -CDX[k], nz = -CDZ[k];
-        pushBox(md, x - ax * 1.35, gy + 1.0, z - az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
-        pushBox(md, x + ax * 1.35, gy + 1.0, z + az * 1.35, 0.16, 2.0, 0.16, 0, 0.25, 0.26, 0.30);
-        const o = [x, gy + 2.0, z];
-        panelBar(md, o, ax, 0, az, 0, 1, 0, -1.62, 0, 1.62, 0, 0.72, 0.125, 0.135, 0.24, nx, 0, nz);
-        const o2 = [x + nx * 0.05, gy + 2.0, z + nz * 0.05];
-        panelBar(md, o2, ax, 0, az, 0, 1, 0, -1.5, 0, 1.5, 0, 0.6, 0.96, 0.30, 0.10, nx, 0, nz);
-        const dir = turnRight ? -1 : 1;
-        for (let cvi = 0; cvi < 3; cvi++) {
-          const cx0 = (cvi - 1) * 0.88 * dir;
-          const o3 = [x + nx * 0.10, gy + 2.0, z + nz * 0.10];
-          panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 - 0.22 * dir, 0.36, cx0 + 0.22 * dir, 0.02, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
-          panelBar(md, o3, ax, 0, az, 0, 1, 0, cx0 + 0.22 * dir, 0.02, cx0 - 0.22 * dir, -0.34, 0.085, 0.98, 0.97, 0.94, nx, 0, nz);
-        }
+        warnBoard(k, outer * (CW[k] + 3.2), turnRight ? -1 : 1);
       }
       i = j;
+    }
+    // drop-ins and ledges: a board EACH SIDE of the lip, chevrons pointing in
+    for (const di of DROPS) {
+      const k = clamp(di - 4, 2, NSM - 3);
+      warnBoard(k, -(CW[k] + 2.6), 1);
+      warnBoard(k, CW[k] + 2.6, -1);
     }
   })();
 
@@ -836,13 +900,15 @@ function buildWorldScene(W) {
       snowman: { x: W.snowman.x, z: W.snowman.z, s: (FINISH_I - 40) * STEP },
       peaks: W.peaks,
       gateBoxes: W.gateBoxes,
+      features: W.FEATS,
+      fogFar: cfg.fogFar,
     };
   }
 }
 
-/* ═════════════════ build BOTH mountains ═════════════════ */
+/* ═════════════════ build ALL mountains ═════════════════ */
 const WORLDS = {};
-for (const id of ['alp', 'nr']) {
+for (const id of MTN_ORDER) {
   const Wd = buildCourseData(MTN[id]);
   buildWorldScene(Wd);
   WORLDS[id] = Wd;

@@ -4,14 +4,16 @@
    repointing them at the other prebuilt world. */
 const STEP = 3;
 let W = null;
-let NSM = 0, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE;
+let NSM = 0, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CCURV, CW, CBANK, CRAMP, CWL, CWR, CSTYLE, CMOG;
 let GATES, RAMPS, FINISH_I;
 let terrainInfo, terrainH, terrainGrad;
 let OBS = null, MEDALS = null, BEST_KEY = '', MP = null;
 let best = null;
+let NSEC = 4;                 // sectors on the ACTIVE mountain (gates + 1)
+const MAX_SEC = 8;            // preallocated per-player sector slots
 
 /* per-mountain bests, loaded once */
-for (const id of ['alp', 'nr']) {
+for (const id of MTN_ORDER) {
   const Wd = WORLDS[id];
   let b = null;
   try { b = JSON.parse(localStorage.getItem(Wd.cfg.bestKey)); } catch (e) { b = null; }
@@ -23,6 +25,26 @@ try { const m = localStorage.getItem(MTN_KEY); if (m && WORLDS[m]) lastMtnId = m
 
 /* ═════════════════ HUD (DOM; text updated only on change) ═════════════════ */
 const el = id => document.getElementById(id);
+
+/* mountain select: one card per MTN_ORDER entry, built at boot — adding a
+   4th mountain is config-only. Card ids stay mcard<i>/mthumb<i>/… */
+(function buildSelectCards() {
+  const row = el('mcardRow');
+  for (let i = 0; i < MTN_ORDER.length; i++) {
+    const cfg = MTN[MTN_ORDER[i]];
+    const d = document.createElement('div');
+    d.className = 'mcard' + (i === 0 ? ' sel' : '');
+    d.id = 'mcard' + i;
+    d.innerHTML =
+      '<div class="mname">' + cfg.name +
+        (cfg.tag ? '<span class="mtag">' + cfg.tag + '</span>' : '') + '</div>' +
+      '<canvas id="mthumb' + i + '" width="316" height="178"></canvas>' +
+      '<div class="mbest" id="mbest' + i + '"></div>' +
+      '<div class="mmedal" id="mmedal' + i + '"></div>' +
+      '<div class="pchips"><span class="chip c1">P1</span><span class="chip c2">P2</span></div>';
+    row.appendChild(d);
+  }
+})();
 const timeText = el('timeText'), speedNum = el('speedNum'), needle = el('needle');
 const profMarker = el('profMarker'), gradePct = el('gradePct');
 const sectorNum = el('sectorNum'), bestChip = el('bestChip');
@@ -35,12 +57,15 @@ let profPX = null, profPY = null;
 // redrawn once per MOUNTAIN (not once per boot): the profile is the
 // active course's silhouette
 function drawProfile() {
+  // the profile is the RUN's silhouette — the long scenery run-out past the
+  // finish (void fix) is not part of the race and stays off the chart
   const ctx = el('profileCanvas').getContext('2d');
+  const PN = Math.min(NSM, FINISH_I + 12);
   profPX = new Float32Array(NSM); profPY = new Float32Array(NSM);
   let yMin = 1e9, yMax = -1e9;
-  for (let i = 0; i < NSM; i++) { if (CY[i] < yMin) yMin = CY[i]; if (CY[i] > yMax) yMax = CY[i]; }
-  const px = i => 3 + (i / (NSM - 1)) * (PROF_W - 6);
-  const py = i => 6 + (1 - (CY[i] - yMin) / (yMax - yMin)) * (PROF_H - 14);
+  for (let i = 0; i < PN; i++) { if (CY[i] < yMin) yMin = CY[i]; if (CY[i] > yMax) yMax = CY[i]; }
+  const px = i => 3 + (Math.min(i, PN - 1) / (PN - 1)) * (PROF_W - 6);
+  const py = i => 6 + (1 - (CY[Math.min(i, PN - 1)] - yMin) / (yMax - yMin)) * (PROF_H - 14);
   for (let i = 0; i < NSM; i++) { profPX[i] = px(i); profPY[i] = py(i); }
   ctx.fillStyle = '#171930';
   ctx.fillRect(0, 0, PROF_W, PROF_H);
@@ -50,12 +75,12 @@ function drawProfile() {
     ctx.beginPath(); ctx.moveTo(px(gi) + 0.5, 4); ctx.lineTo(px(gi) + 0.5, PROF_H - 4); ctx.stroke();
     ctx.fillText(String(n + 1), px(gi) - 8, PROF_H - 5);
   });
-  ctx.fillText('4', px(FINISH_I) - 8, PROF_H - 5);
+  ctx.fillText(String(GATES.length + 1), px(FINISH_I) - 8, PROF_H - 5);
   ctx.strokeStyle = '#ffd23e'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(px(0), py(0));
-  for (let i = 2; i < NSM; i += 2) ctx.lineTo(px(i), py(i));
+  for (let i = 2; i < PN; i += 2) ctx.lineTo(px(i), py(i));
   ctx.stroke();
-  ctx.lineTo(px(NSM - 1), PROF_H); ctx.lineTo(px(0), PROF_H); ctx.closePath();
+  ctx.lineTo(px(PN - 1), PROF_H); ctx.lineTo(px(0), PROF_H); ctx.closePath();
   ctx.fillStyle = 'rgba(255,210,62,0.10)'; ctx.fill();
 }
 (function drawGauge() {
@@ -285,10 +310,11 @@ window.addEventListener('keyup', e => {
   bind('tbtnJump', () => { E[0].jump = true; }, () => {});
   el('tbtnPause').addEventListener('touchstart', e => { e.preventDefault(); ensureAudio(); E[0].pause = true; }, { passive: false });
   // mountain cards: tap selects, tap again confirms
-  for (const i of [0, 1]) {
+  for (let i = 0; i < MTN_ORDER.length; i++) {
+    const idx = i;
     el('mcard' + i).addEventListener('touchstart', e => {
       e.preventDefault(); ensureAudio();
-      if (state === S_SELECT) E[0].selCard = i;
+      if (state === S_SELECT) E[0].selCard = idx;
     }, { passive: false });
   }
   // tap anywhere = confirm on title/finish; fallback input-touch class if the
@@ -338,9 +364,9 @@ function mkPlayer(idx) {
     trickT: 0, trickType: 0, airN: 0, hopAir: false,
     airTypes: new Int8Array(8),         // completed tricks THIS air
     inp: { steer: 0, steerTarget: 0, tuck: false, brake: false, trickX: 0, trickY: 0 },
-    gateIdx: 0,                         // 0=start, 1..3 gates
+    gateIdx: 0,                         // 0=start, 1..GATES.length gates
     runTime: 0, finalTime: 0, finished: false,
-    sectorStartTime: 0, curSectors: [0, 0, 0, 0],
+    sectorStartTime: 0, curSectors: new Array(MAX_SEC).fill(0),
     trickName: '', boostPct: 0, smHit: false, rbMult: 1,
     fadeT: 0, fadeEl: null,
     cam: { pos: new THREE.Vector3(0, 30, -40), look: new THREE.Vector3(0, 0, 0),
@@ -488,7 +514,7 @@ function resetPlayerRun(pl) {
   pl.gateIdx = 0;
   pl.runTime = 0; pl.finalTime = 0; pl.finished = false;
   pl.sectorStartTime = 0;
-  pl.curSectors[0] = pl.curSectors[1] = pl.curSectors[2] = pl.curSectors[3] = 0;
+  for (let k = 0; k < MAX_SEC; k++) pl.curSectors[k] = 0;
   pl.trickName = ''; pl.boostPct = 0; pl.smHit = false; pl.rbMult = 1;
   pl.inp.steer = 0;
 }
@@ -530,7 +556,7 @@ function startRace() {
   W.goldTrim.visible = !!(best && medalFor(best.time, MEDALS) === 'GOLD');
   // split perf budgets are asserted over split frames only
   TL.perf.maxCalls = 0; TL.perf.maxTris = 0;
-  for (let k = 0; k < 4; k++) { TL.perf.sectorCalls[k] = 0; TL.perf.sectorTris[k] = 0; }
+  for (let k = 0; k < 6; k++) { TL.perf.sectorCalls[k] = 0; TL.perf.sectorTris[k] = 0; }
   try { localStorage.setItem(MTN_KEY, W.cfg.id); } catch (e) {}
 }
 function gotoTitle() {
@@ -567,7 +593,7 @@ function finishRun() {           // 1P finish — medals, bests, splits table
   const pl = players[0];
   pl.finished = true;
   pl.finalTime = pl.runTime;
-  pl.curSectors[3] = pl.finalTime - pl.sectorStartTime;
+  pl.curSectors[NSEC - 1] = pl.finalTime - pl.sectorStartTime;
   state = S_FINISH;
   finishShowT = 0.9;
   sfx.fanfare();
@@ -576,7 +602,7 @@ function finishRun() {           // 1P finish — medals, bests, splits table
   const isBest = !best || pl.finalTime < best.time;
   const prevBest = best;
   if (isBest) {
-    best = { time: pl.finalTime, sectors: pl.curSectors.slice() };
+    best = { time: pl.finalTime, sectors: pl.curSectors.slice(0, NSEC) };
     W.best = best;
     try { localStorage.setItem(BEST_KEY, JSON.stringify(best)); } catch (e) {}
   }
@@ -586,7 +612,7 @@ function finishRun() {           // 1P finish — medals, bests, splits table
   el('finalTime').textContent = fmtTime(pl.finalTime);
   el('newBest').textContent = isBest ? 'NEW BEST TIME!' : (prevBest ? 'BEST ' + fmtTime(prevBest.time) : '');
   let rows = '';
-  for (let k = 0; k < 4; k++) {
+  for (let k = 0; k < NSEC; k++) {
     const ref = prevBest && prevBest.sectors ? prevBest.sectors[k] : null;
     const d = ref != null ? pl.curSectors[k] - ref : null;
     rows += '<tr><td>SECTOR ' + (k + 1) + '</td><td>' + fmtTime(pl.curSectors[k]) + '</td><td class="d ' +
@@ -601,7 +627,7 @@ function finishRun() {           // 1P finish — medals, bests, splits table
 function racePlayerFinish(pl) {
   pl.finished = true;
   pl.finalTime = pl.runTime;
-  pl.curSectors[3] = pl.finalTime - pl.sectorStartTime;
+  pl.curSectors[NSEC - 1] = pl.finalTime - pl.sectorStartTime;
   if (race.winner < 0) {
     race.winner = pl.idx;
     const b = rbanEl[1 - pl.idx];      // banner on the OTHER player's half
@@ -624,11 +650,13 @@ function showRaceResults() {
   rw.className = w === 0 ? 'p1' : 'p2';
   el('rrT0').textContent = fmtTime(players[0].finalTime);
   el('rrT1').textContent = fmtTime(players[1].finalTime);
-  let rows = '<tr class="h"><td></td><td>S1</td><td>S2</td><td>S3</td><td>S4</td></tr>';
+  let rows = '<tr class="h"><td></td>';
+  for (let k = 1; k <= NSEC; k++) rows += '<td>S' + k + '</td>';
+  rows += '</tr>';
   for (let pi = 0; pi < 2; pi++) {
     const pl = players[pi];
     rows += '<tr><td class="' + (pi === 0 ? 'c1' : 'c2') + '">P' + (pi + 1) + '</td>';
-    for (let k = 0; k < 4; k++) rows += '<td>' + pl.curSectors[k].toFixed(1) + '</td>';
+    for (let k = 0; k < NSEC; k++) rows += '<td>' + pl.curSectors[k].toFixed(1) + '</td>';
     rows += '</tr>';
   }
   el('rrSplits').innerHTML = rows;
@@ -804,14 +832,29 @@ function tickPlayer(pl) {
 
   if (!pl.air) {
     const g = terrainGrad(pl.x, pl.z);
-    const slopeAlong = g.x * dirx + g.z * dirz;   // + = uphill ahead
+    let slopeAlong = g.x * dirx + g.z * dirz;     // + = uphill ahead
+    if (CMOG[pl.curI] > 0) {
+      // mogul fields: the smoothed gradient can't see a λ≈3 m bump — read
+      // the TRUE local surface slope so every face is physically real.
+      // Climbing a face costs speed; launching off the crest skips the
+      // payback — bouncing bleeds, rhythm through the troughs doesn't.
+      const hF = terrainH(pl.x + dirx * 0.55, pl.z + dirz * 0.55);
+      const hB = terrainH(pl.x - dirx * 0.55, pl.z - dirz * 0.55);
+      slopeAlong = (hF - hB) / 1.1;
+    }
     pl.grade = slopeAlong;
     pl.latSlope = g.x * dirz - g.z * dirx;
     // accelerate down the fall line component we're pointed along
     pl.v += (-slopeAlong) * 9.81 * DT;
-    const cd = tuck ? MP.cdTuck : MP.cdRun;
+    // you cannot hold a tuck through moguls — chopped snow denies the
+    // aero crouch and its acceleration (rhythm, not tucking, is the skill)
+    const mogHere = CMOG[pl.curI] > 0;
+    const cd = (tuck && !mogHere) ? MP.cdTuck : MP.cdRun;
     // rubber-band mercy rides the tuck bite (rbMult = 1 outside a race)
-    if (tuck) pl.v += MP.tuckAccel * pl.rbMult * DT;
+    if (tuck && !mogHere) pl.v += MP.tuckAccel * pl.rbMult * DT;
+    // mogul flow: carving rhythmically through the troughs, grounded, is
+    // rewarded — pumping the bumps (the fast, smooth line the field wants)
+    if (CMOG[pl.curI] > 0 && !brake && Math.abs(inp.steer) > 0.30) pl.v += 2.3 * DT;
     pl.v -= cd * pl.v * pl.v * DT;
     pl.v -= 0.010 * 9.81 * DT;
     pl.v -= Math.abs(turnRate) * pl.v * MP.carve * DT;
@@ -841,6 +884,9 @@ function tickPlayer(pl) {
       pl.air = true;
       pl.vy = Math.max(pl.groundVy, -2);
       pl.launchHeading = pl.heading;
+      // bucked off a mogul crest: launching without an absorbing carve
+      // costs forward speed — every bounce down a straight line bleeds
+      if (CMOG[pl.curI] > 0) pl.v *= 1 - 0.10 * (1 - Math.min(1, Math.abs(inp.steer) / 0.6));
       sfx.whoosh();
     } else {
       pl.groundVy = dy / DT;
@@ -861,6 +907,37 @@ function tickPlayer(pl) {
     if (pl.y <= hNow) {
       pl.y = hNow;
       pl.air = false;
+      // landing INTO an uphill face bites — the physics that makes bouncing
+      // straight through a mogul field slow and sketchy. Downhill landings
+      // (ramps, ledges, schusses) are untouched. Never a crash (kid mercy).
+      const onMogul = CMOG[domI] > 0;
+      if (onMogul) {
+        const impactV = -pl.vy;
+        if (impactV > 1.2) {
+          // tight slope sample along the heading (a λ≈3 m bump face is
+          // invisible to the smoothed terrainGrad — read it directly)
+          const hA = terrainH(pl.x + dirx * 0.6, pl.z + dirz * 0.6);
+          const hB = terrainH(pl.x - dirx * 0.6, pl.z - dirz * 0.6);
+          let upA = (hA - hB) / 1.2;                // + = uphill ahead
+          // chopped snow: whatever you land on, a bump face is right there
+          const hC = terrainH(pl.x + dirx * 1.8, pl.z + dirz * 1.8);
+          const upB = (hC - hA) / 1.2;
+          if (upB > upA) upA = upB;
+          {
+            // EVERY landing in chopped snow costs — and hitting a bump face
+            // square costs more (your forward speed rams it). An active
+            // carve absorbs most of the hit; a straight bomb-run takes it
+            // all. Speed control + rhythm = the skill. Never a crash.
+            let pen = Math.min(0.32, impactV * 0.075);
+            if (upA > 0.22) pen = Math.min(0.50, pen + upA * (impactV + upA * pl.v * 0.5) * 0.22);
+            pen *= 1 - 0.80 * Math.min(1, Math.abs(inp.steer) / 0.6);
+            pl.v *= 1 - pen;
+            if (pen > 0.10) pl.wobbleT = Math.max(pl.wobbleT, 0.7);
+          }
+          // (non-mogul terrain keeps the shipped landing rules untouched —
+          // ALPENGLOW and NIGHT RIDGE behave exactly as before)
+        }
+      }
       pl.groundVy = 0;
       const dphi = Math.abs(wrapAngle(pl.heading - pl.launchHeading));
       spawnSpray(pl.x, pl.y + 0.2, pl.z, 0, 1.5, 0, 3.5, 26);
@@ -893,7 +970,8 @@ function tickPlayer(pl) {
           cheered = true;
         } else pl.boostPct = 0;
         if (dphi < 0.16) {
-          if (!pl.hopAir) {               // aligned landing bonus (stacks)
+          if (!pl.hopAir && !onMogul) {   // aligned landing bonus (stacks) —
+                                          // chopped mogul snow gives nothing free
             pl.v = Math.min(pl.v * 1.06 + 0.5, VMAX_BOOST);
             if (!cheered) {
               sfx.boost();
@@ -985,13 +1063,16 @@ function tickPlayer(pl) {
   /* trees & rocks */
   if (!pl.air && pl.invulnT <= 0 && state === S_RUN && !pl.finished) collideObstacles(pl);
 
-  /* way off course, or hopelessly stuck → gentle respawn */
+  /* way off course, or hopelessly stuck → gentle respawn. On every slope of
+     every course, gravity moves a free skier — so sitting at v≈0 WITHOUT
+     holding brake means trapped (pinned on a trunk, wedged in a pocket):
+     mercy respawns them. A deliberate braked stop is never touched. */
   if (state === S_RUN && !pl.finished) {
     const au = Math.abs(pl.u);
     if (au > 42 || h.d > 70) { respawnAtCheckpoint(pl, true); }
-    else if (pl.v < 1 && au > CW[domI] + 1 && !pl.air) {
+    else if (pl.v < 1 && !pl.air && !inp.brake) {
       pl.stuckT += DT;
-      if (pl.stuckT > 1.6) respawnAtCheckpoint(pl, true);
+      if (pl.stuckT > (au > CW[domI] + 1 ? 1.6 : 2.5)) respawnAtCheckpoint(pl, true);
     } else pl.stuckT = 0;
   }
 

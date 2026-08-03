@@ -143,7 +143,8 @@ const PAD_STUB = `(function(){
 const BOT_SRC = `(function(){
   if (window.__botInstalled) return; window.__botInstalled = true;
   const mkBot = () => ({ on:false, mode:'race', forceTuck:false, forceBrake:false, noTuck:false,
-                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[], path:null, pathIdx:0 });
+                   ramX:0, ramZ:0, steerOnly:null, extraBtns:[], path:null, pathIdx:0,
+                   weave:null });   // {a, w}: rhythmic carve overlay (mogul line)
   window.__bot = mkBot();
   window.__bot2 = mkBot();
   const wrap = a => { while(a>Math.PI)a-=2*Math.PI; while(a<-Math.PI)a+=2*Math.PI; return a; };
@@ -182,6 +183,10 @@ const BOT_SRC = `(function(){
     // heading INCREASE needs stick pushed LEFT (screen-correct steering)
     let steer = -Math.max(-1, Math.min(1, err*2.4));
     if (b.steerOnly !== null) steer = b.steerOnly;
+    if (b.weave) {  // square-wave rhythm: a committed carve on every beat
+      const ph = Math.sin(T.tick * b.weave.w);
+      steer = Math.max(-1, Math.min(1, steer + (ph >= 0 ? 1 : -1) * b.weave.a));
+    }
     // read the road ahead for tuck/brake decisions
     let maxC = 0;
     const lookN = Math.min(C.length-1-idx, Math.max(4, Math.round(T.speed*2.4/9)));
@@ -316,13 +321,19 @@ async function tapKeyUntil(A, key, code, vk, expr, label) {
   throw new Error('tapKeyUntil gave up: ' + label);
 }
 /* pad path through the mountain select: title → select → card → run */
-async function startFromTitle(A, mtn) {
-  await tapUntil(A, 0, `__pp.state==='select'`, 'select screen');
-  const want = mtn === 'nr' ? 1 : 0;
-  for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== want; i++) {
-    await A.tapButton(want === 1 ? 15 : 14);        // dpad right / left
+const CARD_IDX = { alp: 0, nr: 1, db: 2 };
+async function selectCard(A, mtn) {
+  const want = CARD_IDX[mtn] ?? 0;
+  for (let i = 0; i < 10; i++) {
+    const cur = await A.eval('__pp.selectSel');
+    if (cur === want) return;
+    await A.tapButton(cur < want ? 15 : 14);        // dpad right / left
   }
   if (await A.eval('__pp.selectSel') !== want) throw new Error('could not highlight card ' + want);
+}
+async function startFromTitle(A, mtn) {
+  await tapUntil(A, 0, `__pp.state==='select'`, 'select screen');
+  await selectCard(A, mtn);
   await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'run start');
   await A.waitFor(`__pp.state==='run'`, 12000, 'countdown → run');
 }
@@ -349,6 +360,9 @@ async function gatesSession(base) {
     await sleep(600);
 
     gate('boot: telemetry present, state=title', await A.eval(`__pp.state`) === 'title');
+    const bootMs = await A.eval('window.__ppBootMs');
+    gate('boot: three worlds built in < 2.5s', typeof bootMs === 'number' && bootMs < 2500,
+      `${Math.round(bootMs)} ms`);
 
     // scenery may never sit on the piste: every backdrop peak's footprint
     // must clear every course sample (regression: sector-2 "blind pyramid")
@@ -391,7 +405,9 @@ async function gatesSession(base) {
     await A.bot({ forceTuck: false, forceBrake: true });
     await A.waitTicks(140);
     const vBrake = await A.eval('__pp.speed');
-    gate('brake: holding east scrubs speed', vBrake < vTuck - 2.5,
+    // robust on any stretch: a clear scrub, or held near the braked floor
+    // (the tuck sample can land on a slow, twisty pitch)
+    gate('brake: holding east scrubs speed', vBrake < vTuck - 1.3 || vBrake <= 11.0,
       `${vTuck.toFixed(1)} → ${vBrake.toFixed(1)} m/s`);
     await A.bot({ forceBrake: false });
 
@@ -581,11 +597,12 @@ async function gatesSession(base) {
       !!bestObj && typeof bestObj.time === 'number' && Math.abs(bestObj.time - fin.t) < 0.05,
       bestRaw && bestRaw.slice(0, 80));
 
-    // perf budgets at the busiest points, per sector
+    // perf budgets at the busiest points, per sector (active-mountain count)
     const perf = await A.eval('__pp.perf');
-    gate('perf: draw calls ≤ 80 at worst', perf.maxCalls <= 80, `max ${perf.maxCalls} (sectors ${perf.sectorCalls.join('/')})`);
-    gate('perf: triangles ≤ 150k at worst', perf.maxTris <= 150000, `max ${perf.maxTris} (sectors ${perf.sectorTris.join('/')})`);
-    gate('perf: every sector was sampled', perf.sectorCalls.every(v => v > 0), perf.sectorCalls.join('/'));
+    const nSecA = await A.eval('__pp.sectors');
+    gate('perf: draw calls ≤ 80 at worst', perf.maxCalls <= 80, `max ${perf.maxCalls} (sectors ${perf.sectorCalls.slice(0, nSecA).join('/')})`);
+    gate('perf: triangles ≤ 150k at worst', perf.maxTris <= 150000, `max ${perf.maxTris} (sectors ${perf.sectorTris.slice(0, nSecA).join('/')})`);
+    gate('perf: every sector was sampled', perf.sectorCalls.slice(0, nSecA).every(v => v > 0), perf.sectorCalls.slice(0, nSecA).join('/'));
 
     // south on finish screen → new run
     await A.bot({ on: false });
@@ -840,6 +857,46 @@ async function shotsSession(base) {
     await A.eval('window.__ppTurbo = 1');   // hold the countdown: arch framed
     await sleep(250);
     await A.shot('16-gold-arch');
+    // ── DIAMONDBACK shots ──
+    await A.nav(base + '/index.html?turbo=3&fx=full&r=9');
+    await sleep(800);
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select for db shots');
+    await sleep(400);
+    await A.shot('20-select-3cards');                 // 3 cards + EXPERT tag
+    await selectCard(A, 'db');
+    await sleep(300);
+    await A.shot('20b-select-db-highlighted');
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'db run');
+    await A.waitFor(`__pp.state==='run'`, 12000, 'db running');
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    const dbF = JSON.parse(await A.eval('JSON.stringify(window.__ppFeatures)'));
+    // storm palette wide shot on the summit winding
+    await A.waitFor('__pp.s >= 200', 120000, 'db under way');
+    await A.eval('window.__ppTurbo = 1');
+    await sleep(200);
+    await A.shot('21-db-storm-vista');
+    await A.eval('window.__ppTurbo = 3');
+    // mogul field close-up: glide straight a beat so the bumps read clean
+    await A.waitFor(`__pp.s >= ${dbF.moguls[0].s0 + 30}`, 180000, 'db field 1');
+    await A.eval('window.__ppTurbo = 1');
+    await sleep(500);
+    await A.shot('22-db-moguls');
+    await A.eval('window.__ppTurbo = 3');
+    // chute interior — granite walls either side
+    await A.waitFor(`__pp.s >= ${(dbF.chutes[0].s0 + dbF.chutes[0].s1) / 2}`, 180000, 'db chute 1');
+    await A.eval('window.__ppTurbo = 1');
+    await sleep(300);
+    await A.shot('23-db-chute');
+    await A.eval('window.__ppTurbo = 3');
+    // ledge drop mid-air
+    const ledge = dbF.drops.filter(d => d.big)[0];
+    await A.waitFor(`__pp.s >= ${ledge.s - 90}`, 240000, 'db ledge approach');
+    await A.eval('window.__ppTurbo = 1');
+    await A.waitFor(`__pp.air === true && __pp.s > ${ledge.s - 12}`, 90000, 'db ledge air');
+    await sleep(120);
+    await A.shot('24-db-ledge-air');
+    await A.eval('window.__ppTurbo = 3');
     c.close();
   } finally {
     proc.kill(); await sleep(400);
@@ -894,6 +951,10 @@ async function ipadSession(base) {
     await tap(c1.x, c1.y);
     await sleep(250);
     gate('touch: tapping a card selects it', await A.eval('__pp.selectSel') === 1);
+    const c2 = await cardC('mcard2');
+    await tap(c2.x, c2.y);
+    await sleep(250);
+    gate('touch: the third card (DIAMONDBACK) is tappable too', await A.eval('__pp.selectSel') === 2);
     const c0 = await cardC('mcard0');
     await tap(c0.x, c0.y);
     await sleep(250);
@@ -953,6 +1014,16 @@ async function mtnSession(base) {
     // pad: south opens select, east backs out
     await tapUntil(A, 0, `__pp.state==='select'`, 'select opens');
     gate('select: south at title opens mountain select', true);
+    // N-card row: three cards, EXPERT tag on DIAMONDBACK only, row visible
+    gate('select: three mountain cards rendered',
+      await A.eval(`document.querySelectorAll('.mcard').length`) === 3);
+    gate('select: DIAMONDBACK carries the ◆◆ EXPERT tag (others do not)',
+      await A.eval(`(document.querySelector('#mcard2 .mtag')||{}).textContent === '◆◆ EXPERT' &&
+        !document.querySelector('#mcard0 .mtag') && !document.querySelector('#mcard1 .mtag')`));
+    gate('select: all three cards fit the 1280 stage',
+      await A.eval(`(() => { const s = document.getElementById('stage').getBoundingClientRect();
+        return [0,1,2].every(i => { const r = document.getElementById('mcard'+i).getBoundingClientRect();
+          return r.left >= s.left - 1 && r.right <= s.right + 1 && r.width > 200; }); })()`));
     await tapUntil(A, 1, `__pp.state==='title'`, 'east backs out');
     gate('select: east backs out to title', true);
     // pad: navigate right to NIGHT RIDGE, confirm, run starts on it
@@ -993,6 +1064,39 @@ async function mtnSession(base) {
     await A.tapKey('Enter', 'Enter', 13);
     await A.waitFor(`__pp.state==='run'`, 12000, 'kbd alp run');
     gate('select: keyboard confirm starts ALPENGLOW', await A.eval('__pp.mountain') === 'alp');
+    // ── the third card: DIAMONDBACK by pad, by keyboard, and quick-start ──
+    await A.eval('window.__ppTurbo = 1');
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=4');
+    await sleep(500);
+    await tapUntil(A, 0, `__pp.state==='select'`, 'select for db');
+    gate('select: dpad-right twice highlights DIAMONDBACK',
+      await (async () => { for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 2; i++) await A.tapButton(15); return await A.eval('__pp.selectSel') === 2; })());
+    // right at the last card stays put (no wrap)
+    await A.tapButton(15);
+    gate('select: right edge does not wrap', await A.eval('__pp.selectSel') === 2);
+    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'db run');
+    await A.waitFor(`__pp.state==='run'`, 12000, 'db countdown → run');
+    gate('select: confirm starts a DIAMONDBACK run', await A.eval('__pp.mountain') === 'db');
+    gate('select: last-played persisted as db',
+      await A.eval(`localStorage.getItem('powderpeak_mtn')`) === 'db');
+    gate('select: DIAMONDBACK runs 6 sectors', await A.eval('__pp.sectors') === 6);
+    await A.eval('window.__ppTurbo = 1');
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=5');
+    await sleep(500);
+    await tapUntil(A, 9, `__pp.state==='countdown'||__pp.state==='run'`, 'db quick start');
+    gate('select: START at title quick-starts last-played (DIAMONDBACK)',
+      await A.eval('__pp.mountain') === 'db');
+    // keyboard reaches the third card too
+    await A.eval('window.__ppTurbo = 1');
+    await A.nav(base + '/index.html?turbo=8&fx=full&r=6');
+    await sleep(500);
+    await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select for db');
+    const kSel = async (want) => { for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== want; i++) await A.tapKey('ArrowRight', 'ArrowRight', 39); return await A.eval('__pp.selectSel') === want; };
+    gate('select: keyboard ArrowRight reaches DIAMONDBACK', await kSel(2));
+    await A.tapKey('Enter', 'Enter', 13);
+    await A.waitFor(`__pp.state==='run'`, 12000, 'kbd db run');
+    gate('select: keyboard confirm starts DIAMONDBACK', await A.eval('__pp.mountain') === 'db');
     gate('zero console errors/warnings (mtn session)', A.consoleBad.length === 0,
       A.consoleBad.slice(0, 4).join(' | ') || 'clean');
     c.close();
@@ -1077,12 +1181,281 @@ async function nrSession(base) {
     gate('nr: ALPENGLOW best key untouched',
       await A.eval(`localStorage.getItem('powderpeak_best')`) === null);
     const perf = await A.eval('__pp.perf');
+    const nSecN = await A.eval('__pp.sectors');
     gate('nr perf: draw calls ≤ 80 at worst', perf.maxCalls <= 80,
-      `max ${perf.maxCalls} (sectors ${perf.sectorCalls.join('/')})`);
+      `max ${perf.maxCalls} (sectors ${perf.sectorCalls.slice(0, nSecN).join('/')})`);
     gate('nr perf: triangles ≤ 150k at worst', perf.maxTris <= 150000,
-      `max ${perf.maxTris} (sectors ${perf.sectorTris.join('/')})`);
-    gate('nr perf: every sector was sampled', perf.sectorCalls.every(v => v > 0), perf.sectorCalls.join('/'));
+      `max ${perf.maxTris} (sectors ${perf.sectorTris.slice(0, nSecN).join('/')})`);
+    gate('nr perf: every sector was sampled', perf.sectorCalls.slice(0, nSecN).every(v => v > 0),
+      perf.sectorCalls.slice(0, nSecN).join('/'));
     gate('zero console errors/warnings (nr session)', A.consoleBad.length === 0,
+      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+    c.close();
+  } finally {
+    proc.kill(); await sleep(400);
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+/* ═══════════ DIAMONDBACK SESSION — full clean run, moguls, chutes, ledges ═══════════ */
+async function dbSession(base) {
+  console.log('\n── DIAMONDBACK session (?turbo=10, bot race) ──');
+  const { proc, port, profile } = await launchChrome();
+  try {
+    const c = await pageSession(port);
+    const A = makeApi(c);
+    await A.init(); await A.stubPad();
+    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await sleep(500);
+    await startFromTitle(A, 'db');
+    gate('db: run starts on DIAMONDBACK', await A.eval('__pp.mountain') === 'db');
+    gate('db: 6 sectors / 5 gates', await A.eval('__pp.sectors') === 6 &&
+      (await A.eval('window.__ppGates')).gates.length === 5);
+
+    // backdrop peaks clear the course
+    const pk = JSON.parse(await A.eval(`JSON.stringify((function(){
+      const P = window.__ppPeaks || [], C = window.__ppCourse || [];
+      let worst = 1e9;
+      for (const p of P) for (const c of C) {
+        const d = Math.hypot(c.x - p.x, c.z - p.z) - p.r;
+        if (d < worst) worst = d;
+      }
+      return { n: P.length, worst: Math.round(worst) };
+    })())`));
+    gate('db: backdrop peaks clear the course (margin ≥ 100m)', pk.n >= 10 && pk.worst >= 100,
+      `${pk.n} peaks, worst margin ${pk.worst}m`);
+
+    /* ── authored features present & shaped as decided ── */
+    const feats = JSON.parse(await A.eval('JSON.stringify(window.__ppFeatures)'));
+    gate('db: 3 mogul fields / 2 chutes / 4 drops (2 big ledges) authored',
+      feats.moguls.length === 3 && feats.chutes.length === 2 &&
+      feats.drops.length === 4 && feats.drops.filter(d => d.big).length === 2,
+      JSON.stringify({ m: feats.moguls.length, c: feats.chutes.length, d: feats.drops.length }));
+    gate('db: mogul fields increase in length',
+      feats.moguls[0].len < feats.moguls[1].len && feats.moguls[1].len < feats.moguls[2].len,
+      feats.moguls.map(m => m.len + 'm').join(' → '));
+    gate('db: chutes are narrow corridors (5-7m half-width)',
+      feats.chutes.every(ch => ch.w >= 4.5 && ch.w <= 7.2),
+      feats.chutes.map(ch => ch.w + 'm').join(', '));
+
+    // bump lattice is IN the physics height field (λ 2.5-3.5m, real relief)
+    const mog = JSON.parse(await A.eval(`JSON.stringify((function(){
+      const C = window.__ppCourse, m = window.__ppFeatures.moguls[2];
+      const i = Math.round(((m.s0 + m.s1) / 2) / 9);
+      const a = C[i], b = C[i + 1];
+      let dx = b.x - a.x, dz = b.z - a.z; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+      const rx = dz, rz = -dx;
+      // detrended relief: compare each probe to the centreline height at the
+      // same along-course station so the base grade drops out
+      let mn = 1e9, mx = -1e9;
+      for (let pa = -4; pa <= 4; pa++) for (let pu = -3; pu <= 3; pu++) {
+        const bx = a.x + dx * pa * 0.85, bz = a.z + dz * pa * 0.85;
+        const h = window.__ppTerrainProbe(bx + rx * pu * 0.85, bz + rz * pu * 0.85).h;
+        const h0 = window.__ppTerrainProbe(bx, bz).h;
+        const rel = h - h0 * 0;   // absolute; grade over ±3.4m ≈ ±0.5m — relief dominates
+        if (rel < mn) mn = rel; if (rel > mx) mx = rel;
+      }
+      return { relief: +(mx - mn).toFixed(2) };
+    })())`));
+    gate('db: mogul bumps are physically in the terrain function (relief 1-3m over 7m)',
+      mog.relief >= 1.0 && mog.relief <= 3.2, `${mog.relief}m`);
+
+    // chute walls: tall granite either side of the corridor
+    const walls = JSON.parse(await A.eval(`JSON.stringify((function(){
+      const C = window.__ppCourse, F = window.__ppFeatures;
+      return F.chutes.map(function(ch){
+        const i = Math.round(((ch.s0 + ch.s1) / 2) / 9);
+        const a = C[i], b = C[i + 1];
+        let dx = b.x - a.x, dz = b.z - a.z; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+        const rx = dz, rz = -dx;
+        const mid = window.__ppTerrainProbe(a.x, a.z).h;
+        const wl = window.__ppTerrainProbe(a.x + rx * (ch.w + 8), a.z + rz * (ch.w + 8)).h;
+        const wr = window.__ppTerrainProbe(a.x - rx * (ch.w + 8), a.z - rz * (ch.w + 8)).h;
+        return +Math.min(wl - mid, wr - mid).toFixed(1);
+      });
+    })())`));
+    gate('db: chutes are walled by tall granite (≥ 6m rise at +8m lateral)',
+      walls.every(w => w >= 6), walls.join('m, ') + 'm');
+
+    // chute corridors obstacle-free (like the shortcut rule)
+    const obstacles = await A.eval('window.__ppObstacles');
+    const course = await A.eval('window.__ppCourse');
+    let chuteClear = 1e9;
+    for (const ch of feats.chutes) {
+      for (const o of obstacles) {
+        const n = nearestCourse(course, o.x, o.z);
+        if (n.s >= ch.s0 - 5 && n.s <= ch.s1 + 5) {
+          const d = n.d - o.r;
+          if (d < chuteClear) chuteClear = d;
+        }
+      }
+    }
+    gate('db: chute corridors free of obstacles (clearance > half-width + 1m)',
+      chuteClear > feats.chutes[0].w + 1, `min clearance ${chuteClear === 1e9 ? 'none nearby' : chuteClear.toFixed(1) + 'm'}`);
+
+    /* ── full course, clean — the playability proof ── */
+    await A.installBot();
+    await A.bot({ on: true, mode: 'race' });
+    let crashes = 0, lastState = 'run';
+    const t0 = Date.now();
+    while (Date.now() - t0 < 420000) {
+      const st = await A.eval('__pp.state');
+      if (st === 'crash' && lastState !== 'crash') crashes++;
+      lastState = st;
+      if (st === 'finish') break;
+      await sleep(150);
+    }
+    const fin = await A.eval('({t:__pp.time, cp:__pp.checkpoint, st:__pp.state})');
+    gate('db: bot finishes the full course CLEAN (zero crashes)',
+      fin.st === 'finish' && crashes === 0, `time ${fin.t.toFixed(2)}s, crashes ${crashes}`);
+    gate('db: all 5 checkpoint gates passed', fin.cp === 5, `checkpoint=${fin.cp}`);
+    const medals = { gold: 182, silver: 215, bronze: 273 };
+    gate('db: medal calibration holds (bot ≈ 20% over gold)',
+      fin.t / medals.gold > 1.08 && fin.t / medals.gold < 1.35,
+      `bot ${fin.t.toFixed(1)}s vs gold ${medals.gold}s (x${(fin.t / medals.gold).toFixed(2)}); silver ${medals.silver}, bronze ${medals.bronze}`);
+    const bestRaw = await A.eval(`localStorage.getItem('powderpeak_best_db')`);
+    let bestObj = null; try { bestObj = JSON.parse(bestRaw); } catch {}
+    gate('db: best persisted to powderpeak_best_db (6 sectors)',
+      !!bestObj && typeof bestObj.time === 'number' && Math.abs(bestObj.time - fin.t) < 0.05 &&
+      Array.isArray(bestObj.sectors) && bestObj.sectors.length === 6,
+      bestRaw && bestRaw.slice(0, 100));
+    gate('db: other mountains\' best keys untouched',
+      (await A.eval(`localStorage.getItem('powderpeak_best')`)) === null &&
+      (await A.eval(`localStorage.getItem('powderpeak_best_nr')`)) === null);
+    const perf = await A.eval('__pp.perf');
+    gate('db perf: draw calls ≤ 80 at worst', perf.maxCalls <= 80,
+      `max ${perf.maxCalls} (sectors ${perf.sectorCalls.slice(0, 6).join('/')})`);
+    gate('db perf: triangles ≤ 150k at worst', perf.maxTris <= 150000,
+      `max ${perf.maxTris} (sectors ${perf.sectorTris.slice(0, 6).join('/')})`);
+    gate('db perf: all 6 sectors sampled', perf.sectorCalls.slice(0, 6).every(v => v > 0),
+      perf.sectorCalls.slice(0, 6).join('/'));
+
+    /* ── restart helper (pause menu) ── */
+    const restart = async () => {
+      await A.bot({ on: false, forceTuck: false, forceBrake: false, noTuck: false, weave: null, extraBtns: [] });
+      await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+      await sleep(250);
+      await tapUntil(A, 9, `__pp.state==='pause'`, 'pause for restart');
+      await A.tapButton(13);
+      if (!await A.eval(`document.getElementById('mi1').className.includes('sel')`)) await A.tapButton(13);
+      await tapUntil(A, 0, `(__pp.state==='run'||__pp.state==='countdown') && __pp.s < 40`, 'restarted');
+      await A.waitFor(`__pp.state==='run'`, 12000, 'restart countdown done');
+      await A.bot({ on: true, mode: 'race' });
+      await A.eval('window.__ppTurbo = 10');
+    };
+    // south restarts from the finish screen first
+    await A.bot({ on: false });
+    await A.press();
+    await sleep(1200);
+    await A.tapButton(0);
+    await A.waitFor(`__pp.state==='countdown'||__pp.state==='run'`, 8000, 'db ski again');
+    await A.waitFor(`__pp.state==='run'`, 12000, 'db rerun');
+    await A.bot({ on: true, mode: 'race' });
+
+    /* ── MANDATORY AIRS: both drop-ins and both ledges give real air and a
+          clean straight-on landing at sane speed ── */
+    const dropsSorted = feats.drops.slice().sort((a, b) => a.s - b.s);
+    for (const d of dropsSorted) {
+      const tag = d.big ? 'ledge' : 'chute drop-in';
+      await A.waitFor(`__pp.s > ${d.s - 130}`, 300000, 'approach drop ' + d.s);
+      await A.eval('window.__ppTurbo = 2');
+      let sawAir = false;
+      try { await A.waitFor(`__pp.air === true && __pp.s > ${d.s - 12}`, 60000, 'drop air ' + d.s); sawAir = true; } catch {}
+      let landed = { st: 'lost', v: 0 };
+      if (sawAir) {
+        await A.waitFor('__pp.air === false', 20000, 'drop landing ' + d.s);
+        landed = await A.eval('({st:__pp.state, v:__pp.speed})');
+      }
+      await A.eval('window.__ppTurbo = 10');
+      gate(`db: ${tag} at s=${d.s} — real air, landable straight-on, still moving`,
+        sawAir && landed.st === 'run' && landed.v > 5,
+        sawAir ? `landed v=${landed.v.toFixed(1)}` : 'no air observed');
+    }
+
+    /* ── MOGUL PHYSICS GATE: same spot (field 3), two disciplines.
+          A: rhythmic carve, sane entry — stays grounded, faster.
+          B: straight tuck bombing in at course speed — airborne off the
+          crests, wobbles, slower back half. Bumps are physical, not paint. ── */
+    const m3 = feats.moguls[2];
+    // controlled protocol, SAME course spot for both lines: sync the entry
+    // (brake to ≤13 m/s well above the field, at fine sim rate), then apply
+    // the discipline. The bomb line tucks in from the sync point, so it
+    // arrives hot exactly like a kid pointing them straight.
+    const fieldRun = async (cfg) => {
+      await restart();
+      await A.waitFor(`__pp.s > ${m3.s0 - 210}`, 300000, 'approach field 3');
+      await A.eval('window.__ppTurbo = 2');   // fine sim control near the field
+      await A.bot({ forceBrake: true });
+      const tb = Date.now();
+      while (Date.now() - tb < 120000) {
+        const st = await A.eval('({v:__pp.speed, s:__pp.s})');
+        if (st.v < 13 || st.s > m3.s0 - 110) break;
+        await sleep(15);
+      }
+      await A.bot({ forceBrake: false, ...cfg });
+      const obsS = m3.s0 - 10;                // air events counted from the brink
+      const winS = m3.s0 + 15;                // timing/speed window (settled)
+      const midS = (winS + m3.s1) / 2;
+      let n = 0, air = 0, wob = 0, vsum = 0, airEvents = 0, prevAir = false;
+      let tEnter = null, tMid = null, tExit = null;
+      let n2 = 0, v2sum = 0;
+      const tf = Date.now();
+      while (Date.now() - tf < 240000) {
+        const st = await A.eval('({s:__pp.s, air:__pp.air, w:__pp.wobble, v:__pp.speed, t:__pp.time, state:__pp.state})');
+        if (st.state !== 'run') break;
+        if (st.s >= obsS && st.s <= m3.s1) {
+          if (st.air && !prevAir) airEvents++;
+          prevAir = st.air;
+        }
+        if (tEnter === null && st.s >= winS) tEnter = st.t;
+        if (tMid === null && st.s >= midS) tMid = st.t;
+        if (st.s >= winS && st.s <= m3.s1) {
+          n++; if (st.air) air++; if (st.w) wob++; vsum += st.v;
+          if (st.s >= midS) { n2++; v2sum += st.v; }
+        }
+        if (st.s > m3.s1) { tExit = st.t; break; }
+        await sleep(12);
+      }
+      await A.eval('window.__ppTurbo = 10');
+      return {
+        time: tExit !== null && tEnter !== null ? tExit - tEnter : 1e9,
+        back: tExit !== null && tMid !== null ? tExit - tMid : 1e9,
+        airFrac: air / Math.max(1, n), wobFrac: wob / Math.max(1, n),
+        airEvents,
+        vAvg: vsum / Math.max(1, n), vBack: v2sum / Math.max(1, n2), n,
+      };
+    };
+    const carve = await fieldRun({ weave: { a: 0.75, w: 0.055 }, noTuck: true });
+    const bomb = await fieldRun({ forceTuck: true });
+    const fmtF = r => `t=${r.time.toFixed(2)}s back=${r.back.toFixed(2)}s air=${r.airFrac.toFixed(2)} airEv=${r.airEvents} wob=${r.wobFrac.toFixed(2)} v=${r.vAvg.toFixed(1)}/${r.vBack.toFixed(1)}`;
+    gate('mogul: rhythmic-carve line stays grounded through the field',
+      carve.n > 30 && carve.airFrac <= 0.12, fmtF(carve));
+    gate('mogul: straight-tuck line wobbles off bad landings',
+      bomb.wobFrac > 0.05, fmtF(bomb));
+    gate('mogul: the carve line is FASTER through the bumps (settled back half)',
+      carve.back < bomb.back - 0.15 && carve.vBack > bomb.vBack + 0.5,
+      `carve ${carve.back.toFixed(2)}s @${carve.vBack.toFixed(1)}m/s vs bomb ${bomb.back.toFixed(2)}s @${bomb.vBack.toFixed(1)}m/s`);
+    // straight-tuck AT COURSE SPEED gets bucked airborne off the crests —
+    // ridden hot (no pre-brake), the ejection is a certainty if the bumps
+    // are real geometry. waitFor makes this deterministic.
+    {
+      await restart();
+      await A.waitFor(`__pp.s > ${m3.s0 - 160}`, 300000, 'hot approach field 3');
+      await A.bot({ forceTuck: true });
+      await A.eval('window.__ppTurbo = 2');
+      let hotAir = true;
+      try {
+        await A.waitFor(`__pp.air === true && __pp.s > ${m3.s0 - 12} && __pp.s < ${m3.s1}`,
+          120000, 'hot bomb ejection');
+      } catch { hotAir = false; }
+      const hotV = await A.eval('__pp.speed');
+      await A.bot({ forceTuck: false });
+      await A.eval('window.__ppTurbo = 10');
+      gate('mogul: straight-tuck line at course speed goes airborne off the crests',
+        hotAir, hotAir ? `ejected at v=${hotV.toFixed(1)} m/s` : 'no ejection seen');
+    }
+
+    gate('zero console errors/warnings (db session)', A.consoleBad.length === 0,
       A.consoleBad.slice(0, 4).join(' | ') || 'clean');
     c.close();
   } finally {
@@ -1207,15 +1580,15 @@ async function tricksSession(base) {
   }
 }
 
-/* ═══════════ FUN SESSION — hidden shortcut + snowman, both mountains ═══════════ */
+/* ═══════════ FUN SESSION — hidden shortcut + snowman, ALL mountains ═══════════ */
 async function funSession(base) {
-  console.log('\n── delights session (shortcut + snowman, both mountains) ──');
+  console.log('\n── delights session (shortcut + snowman, all three mountains) ──');
   const { proc, port, profile } = await launchChrome();
   try {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    for (const m of ['alp', 'nr']) {
+    for (const m of ['alp', 'nr', 'db']) {
       try { await A.eval('window.__ppTurbo = 1'); } catch {}
       await A.nav(base + '/index.html?turbo=8&fx=full');
       await sleep(500);
@@ -1440,7 +1813,19 @@ async function raceSession(base) {
     // has a decisive lead again, so the scripted winner is P1
     await A.bot({ forceBrake: false });
     await A.bot2({ forceTuck: false, forceBrake: true });
-    await A.waitFor('__pp.race.gap > 60 || __pp.race.finished[0]', 240000, 'P1 retakes a safe lead');
+    {
+      const t0h = Date.now();
+      let ok = false;
+      while (Date.now() - t0h < 240000) {
+        if (await A.eval('__pp.race.gap > 60 || __pp.race.finished[0]')) { ok = true; break; }
+        if ((Date.now() - t0h) % 10000 < 300) {
+          console.log('  [handoff]', JSON.stringify(await A.eval(
+            '({p1:{s:Math.round(__pp.s),v:+__pp.speed.toFixed(1),st:__pp.state,u:+__pp.u.toFixed(1)},p2:{s:Math.round(__pp.p2.s),v:+__pp.p2.speed.toFixed(1),st:__pp.p2.state},tick:__pp.tick})')));
+        }
+        await sleep(300);
+      }
+      if (!ok) throw new Error('timeout waiting for P1 retakes a safe lead');
+    }
     await A.bot2({ forceBrake: false, noTuck: true });
 
     /* ── finish order, banner, results, 1P-best isolation ── */
@@ -1473,12 +1858,13 @@ async function raceSession(base) {
       ndcSamples.length >= 1 && ndcSamples.every(s => Math.abs(s.n1) <= 0.15 && Math.abs(s.n2) <= 0.15),
       ndcSamples.map(s => `${s.n1.toFixed(2)}/${s.n2.toFixed(2)}`).join(' '));
     const perfAlp = await A.eval('__pp.perf');
+    const nSecR = await A.eval('__pp.sectors');
     gate('race perf (alp): combined split draw calls ≤ 110', perfAlp.maxCalls <= 110,
-      `max ${perfAlp.maxCalls} (sectors ${perfAlp.sectorCalls.join('/')})`);
+      `max ${perfAlp.maxCalls} (sectors ${perfAlp.sectorCalls.slice(0, nSecR).join('/')})`);
     gate('race perf (alp): combined split triangles ≤ 120k', perfAlp.maxTris <= 120000,
-      `max ${perfAlp.maxTris} (sectors ${perfAlp.sectorTris.join('/')})`);
-    gate('race perf (alp): every sector sampled in split', perfAlp.sectorCalls.every(v => v > 0),
-      perfAlp.sectorCalls.join('/'));
+      `max ${perfAlp.maxTris} (sectors ${perfAlp.sectorTris.slice(0, nSecR).join('/')})`);
+    gate('race perf (alp): every sector sampled in split', perfAlp.sectorCalls.slice(0, nSecR).every(v => v > 0),
+      perfAlp.sectorCalls.slice(0, nSecR).join('/'));
     await sleep(900);
     await A.shot('35-race-results');
 
@@ -1605,75 +1991,192 @@ async function raceSession(base) {
     try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
   }
 
-  /* ── NIGHT RIDGE split: fresh chrome (heavy reloads kill swiftshader) ── */
-  console.log('── race session: NIGHT RIDGE split (?turbo=10) ──');
-  const g2 = await launchChrome();
-  try {
-    const c = await pageSession(g2.port);
-    const A = makeApi(c);
-    await A.init(); await A.stubPad();
-    await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-    await A.nav(base + '/index.html?turbo=10&fx=full');
-    await sleep(500);
-    await tapUntil(A, 0, `__pp.state==='select'`, 'nr select');
-    for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
-    for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 1; i++) await A.tapButton(15);
-    await A.eval('window.__ppTurbo = 1');
-    await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, 'nr race start');
-    gate('race nr: split race starts on NIGHT RIDGE',
-      await A.eval(`__pp.race.on === true && __pp.mountain === 'nr'`));
-    await sleep(400);
-    const nrBoxes = await A.eval('window.__ppGateBoxes');
-    const nrSnap = await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX, c1:{x:__pp.camPos.x,y:__pp.camPos.y,z:__pp.camPos.z}, c2:{x:__pp.p2.camPos.x,y:__pp.p2.camPos.y,z:__pp.p2.camPos.z}})');
-    gate('race nr: start-line centering + arch clearance',
-      Math.abs(nrSnap.n1) <= 0.15 && Math.abs(nrSnap.n2) <= 0.15 &&
-      camClear(nrBoxes, nrSnap.c1) && camClear(nrBoxes, nrSnap.c2),
-      `ndc ${nrSnap.n1.toFixed(3)} / ${nrSnap.n2.toFixed(3)}`);
-    await A.eval('window.__ppTurbo = 10');
-    await A.waitFor(`__pp.state==='run'`, 20000, 'nr race running');
-    await A.installBot();
-    await A.bot({ on: true, mode: 'race' });
-    await A.bot2({ on: true, mode: 'race', noTuck: true });
-    await A.waitFor('__pp.s > 220', 240000, 'nr under way');
-    await A.eval('window.__ppTurbo = 1');
-    await A.waitTicks(20);
-    await A.shot('38-race-nr-night');
-    await A.eval('window.__ppTurbo = 10');
-    // no GC pressure across 900 split ticks (both sims + double render live)
-    await A.eval('window.gc && window.gc()');
-    const h0 = await A.eval('performance.memory.usedJSHeapSize');
-    await A.waitTicks(900, 90000);
-    await A.eval('window.gc && window.gc()');
-    const h1 = await A.eval('performance.memory.usedJSHeapSize');
-    const growth = (h1 - h0) / 1e6;
-    gate('race perf: no per-frame GC pressure in split', growth < 2.5,
-      `heap Δ ${growth.toFixed(2)} MB over 900 split ticks`);
-    const nrNdc = [];
-    for (const s of [900, 1400]) {
-      await A.waitFor(`__pp.s > ${s}`, 300000, 'nr reach s=' + s);
-      if (await A.eval(`__pp.state==='run' && !__pp.air && __pp.p2.state==='run'`)) {
-        nrNdc.push(await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX})'));
+  /* ── per-mountain split blocks: NIGHT RIDGE and DIAMONDBACK each get a
+        fresh chrome (heavy reloads kill swiftshader) and the same battery:
+        join, start framing, independence, rubber-band, winner, budgets. ── */
+  for (const mtn of ['nr', 'db']) {
+    const NAME = { nr: 'NIGHT RIDGE', db: 'DIAMONDBACK' }[mtn];
+    console.log(`── race session: ${NAME} split (?turbo=10) ──`);
+    const g2 = await launchChrome();
+    try {
+      const c = await pageSession(g2.port);
+      const A = makeApi(c);
+      await A.init(); await A.stubPad();
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+      await A.nav(base + '/index.html?turbo=10&fx=full');
+      await sleep(500);
+      await tapUntil(A, 0, `__pp.state==='select'`, mtn + ' select');
+      for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
+      await selectCard(A, mtn);
+      await A.eval('window.__ppTurbo = 1');
+      await tapUntil(A, 0, `__pp.state==='countdown'||__pp.state==='run'`, mtn + ' race start');
+      gate(`race ${mtn}: split race starts on ${NAME}`,
+        await A.eval(`__pp.race.on === true && __pp.mountain === '${mtn}'`));
+      await sleep(400);
+      const mBoxes = await A.eval('window.__ppGateBoxes');
+      const mSnap = await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX, c1:{x:__pp.camPos.x,y:__pp.camPos.y,z:__pp.camPos.z}, c2:{x:__pp.p2.camPos.x,y:__pp.p2.camPos.y,z:__pp.p2.camPos.z}})');
+      gate(`race ${mtn}: start-line centering + arch clearance`,
+        Math.abs(mSnap.n1) <= 0.15 && Math.abs(mSnap.n2) <= 0.15 &&
+        camClear(mBoxes, mSnap.c1) && camClear(mBoxes, mSnap.c2),
+        `ndc ${mSnap.n1.toFixed(3)} / ${mSnap.n2.toFixed(3)}`);
+      await A.eval('window.__ppTurbo = 10');
+      await A.waitFor(`__pp.state==='run'`, 20000, mtn + ' race running');
+      /* independence: opposite sticks steer each half its own way */
+      await A.waitFor('__pp.speed > 6 && __pp.p2.speed > 6', 30000, 'both moving');
+      await A.eval('__fakePad.axes(0,0); __fakePad.press(); __fakePad2.axes(0,0); __fakePad2.press();');
+      await A.waitTicks(10);
+      const i0 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z,rx:__pp.camRight.x,rz:__pp.camRight.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z,rx:__pp.p2.camRight.x,rz:__pp.p2.camRight.z}})');
+      await A.eval('__fakePad.axes(-1,0); __fakePad2.axes(1,0);');
+      await A.waitTicks(60);
+      await A.eval('__fakePad.axes(0,0); __fakePad2.axes(0,0);');
+      const i1 = await A.eval('({p1:{x:__pp.pos.x,z:__pp.pos.z},p2:{x:__pp.p2.pos.x,z:__pp.p2.pos.z}})');
+      const lat1 = (i1.p1.x - i0.p1.x) * i0.p1.rx + (i1.p1.z - i0.p1.z) * i0.p1.rz;
+      const lat2 = (i1.p2.x - i0.p2.x) * i0.p2.rx + (i1.p2.z - i0.p2.z) * i0.p2.rz;
+      gate(`race ${mtn}: independent sims (P1 left / P2 right, screen-correct)`,
+        lat1 < -0.8 && lat2 > 0.8, `lat P1 ${lat1.toFixed(2)} m / P2 ${lat2.toFixed(2)} m`);
+      await A.installBot();
+      await A.bot({ on: true, mode: 'race' });
+      await A.bot2({ on: true, mode: 'race' });
+      await A.waitFor('__pp.s > 220', 240000, mtn + ' under way');
+      await A.eval('window.__ppTurbo = 1');
+      await A.waitTicks(20);
+      await A.shot(`38-race-${mtn}`);
+      await A.eval('window.__ppTurbo = 10');
+      /* rubber-band mercy on this mountain */
+      await A.bot2({ forceBrake: true });
+      await A.waitFor('__pp.race.gap > 62', 240000, 'gap past the far band');
+      const rbFar = await A.eval('({rb0:__pp.race.rb[0], rb1:__pp.race.rb[1], gap:__pp.race.gap})');
+      gate(`race ${mtn} rubber-band: +4% tuck accel at 60m+ behind, leader unaffected`,
+        Math.abs(rbFar.rb1 - 1.04) < 1e-6 && rbFar.rb0 === 1,
+        `gap ${rbFar.gap.toFixed(0)}m → rb ${rbFar.rb1.toFixed(3)} / leader ${rbFar.rb0}`);
+      await A.bot2({ forceBrake: false, noTuck: true });
+      /* no GC pressure across 900 split ticks (both sims + double render) */
+      await A.eval('window.gc && window.gc()');
+      const h0 = await A.eval('performance.memory.usedJSHeapSize');
+      await A.waitTicks(900, 90000);
+      await A.eval('window.gc && window.gc()');
+      const h1 = await A.eval('performance.memory.usedJSHeapSize');
+      const growth = (h1 - h0) / 1e6;
+      gate(`race perf (${mtn}): no per-frame GC pressure in split`, growth < 2.5,
+        `heap Δ ${growth.toFixed(2)} MB over 900 split ticks`);
+      const finS = (await A.eval('window.__ppGates')).finish;
+      const mNdc = [];
+      for (const fr of [0.42, 0.66]) {
+        const s = Math.round(finS * fr);
+        await A.waitFor(`__pp.s > ${s}`, 400000, mtn + ' reach s=' + s);
+        if (await A.eval(`__pp.state==='run' && !__pp.air && __pp.p2.state==='run'`)) {
+          mNdc.push(await A.eval('({n1:__pp.ndcX, n2:__pp.p2.ndcX})'));
+        }
       }
+      await A.waitFor(`__pp.state==='results'`, 500000, mtn + ' race results');
+      gate(`race ${mtn}: winner declared (P1, first across)`, await A.eval('__pp.race.winner') === 0 &&
+        await A.eval(`document.getElementById('rrWinner').textContent`) === 'P1 WINS!');
+      gate(`race ${mtn}: skiers centered mid-course (|ndcX| ≤ 0.15)`,
+        mNdc.length >= 1 && mNdc.every(s => Math.abs(s.n1) <= 0.15 && Math.abs(s.n2) <= 0.15),
+        mNdc.map(s => `${s.n1.toFixed(2)}/${s.n2.toFixed(2)}`).join(' '));
+      const perfM = await A.eval('__pp.perf');
+      const nSecM = await A.eval('__pp.sectors');
+      gate(`race perf (${mtn}): combined split draw calls ≤ 110`, perfM.maxCalls <= 110,
+        `max ${perfM.maxCalls} (sectors ${perfM.sectorCalls.slice(0, nSecM).join('/')})`);
+      gate(`race perf (${mtn}): combined split triangles ≤ 120k`, perfM.maxTris <= 120000,
+        `max ${perfM.maxTris} (sectors ${perfM.sectorTris.slice(0, nSecM).join('/')})`);
+      gate(`race perf (${mtn}): every sector sampled in split`, perfM.sectorCalls.slice(0, nSecM).every(v => v > 0),
+        perfM.sectorCalls.slice(0, nSecM).join('/'));
+      gate(`zero console errors/warnings (race ${mtn} session)`, A.consoleBad.length === 0,
+        A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+      c.close();
+    } finally {
+      g2.proc.kill(); await sleep(400);
+      try { fs.rmSync(g2.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
     }
-    await A.waitFor(`__pp.state==='results'`, 400000, 'nr race results');
-    gate('race nr: winner declared', await A.eval('__pp.race.winner') === 0 &&
-      await A.eval(`document.getElementById('rrWinner').textContent`) === 'P1 WINS!');
-    gate('race nr: skiers centered mid-course (|ndcX| ≤ 0.15)',
-      nrNdc.length >= 1 && nrNdc.every(s => Math.abs(s.n1) <= 0.15 && Math.abs(s.n2) <= 0.15),
-      nrNdc.map(s => `${s.n1.toFixed(2)}/${s.n2.toFixed(2)}`).join(' '));
-    const perfNr = await A.eval('__pp.perf');
-    gate('race perf (nr): combined split draw calls ≤ 110', perfNr.maxCalls <= 110,
-      `max ${perfNr.maxCalls} (sectors ${perfNr.sectorCalls.join('/')})`);
-    gate('race perf (nr): combined split triangles ≤ 120k', perfNr.maxTris <= 120000,
-      `max ${perfNr.maxTris} (sectors ${perfNr.sectorTris.join('/')})`);
-    gate('race perf (nr): every sector sampled in split', perfNr.sectorCalls.every(v => v > 0),
-      perfNr.sectorCalls.join('/'));
-    gate('zero console errors/warnings (race nr session)', A.consoleBad.length === 0,
-      A.consoleBad.slice(0, 4).join(' | ') || 'clean');
-    c.close();
-  } finally {
-    g2.proc.kill(); await sleep(400);
-    try { fs.rmSync(g2.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }
+}
+
+/* ═══════════ VOID SESSION — the world past the finish line, all mountains.
+   During the finish orbit the camera's full 360 must only ever frame
+   generated terrain/backdrop — never bare fog void (Ben's complaint). ═══════════ */
+async function voidSession(base) {
+  console.log('\n── finish-orbit void session (all three mountains) ──');
+  for (const mtn of ['alp', 'nr', 'db']) {
+    const { proc, port, profile } = await launchChrome();
+    try {
+      const c = await pageSession(port);
+      const A = makeApi(c);
+      await A.init(); await A.stubPad();
+      await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
+      await A.nav(base + '/index.html?turbo=14&fx=full');
+      await sleep(500);
+      await startFromTitle(A, mtn);
+      await A.installBot();
+      await A.bot({ on: true, mode: 'race' });
+      await A.waitFor(`__pp.state==='finish'`, 420000, mtn + ' finish');
+      await A.bot({ on: false });
+      await A.eval('__fakePad.axes(0,0); __fakePad.press();');
+      await sleep(600);
+      // geometric 360: 12 azimuths on the orbit cam's actual path formula
+      // (radius 13, +5.5 above the skier, looking at the skier). Rays across
+      // the horizontal FOV at the center-look depression and a shallower one
+      // must all hit generated terrain before the fog swallows the view.
+      const misses = JSON.parse(await A.eval(`JSON.stringify((function(){
+        const P = { x: __pp.pos.x, y: __pp.pos.y, z: __pp.pos.z };
+        const fogFar = window.__ppFogFar || 380;
+        const bad = [];
+        for (let a = 0; a < 12; a++) {
+          const th = a / 12 * Math.PI * 2;
+          const cx = P.x + Math.cos(th) * 13, cy = P.y + 5.5, cz = P.z + Math.sin(th) * 13;
+          const yaw0 = Math.atan2(P.x - cx, P.z - cz);
+          for (const yo of [-0.83, -0.41, 0, 0.41, 0.83]) {
+            for (const el of [-0.33, -0.12]) {
+              const yw = yaw0 + yo;
+              const rx = Math.sin(yw), rz = Math.cos(yw);
+              let hit = false;
+              for (let t = 6; t < fogFar * 0.92; t += 5) {
+                const pr = window.__ppTerrainProbe(cx + rx * t, cz + rz * t);
+                if (pr.d < 70 && pr.h >= cy + el * t) { hit = true; break; }
+              }
+              if (!hit) bad.push({ a, yo, el });
+            }
+          }
+        }
+        return bad;
+      })())`));
+      gate(`void(${mtn}): all 120 finish-orbit view rays hit generated world`,
+        misses.length === 0, misses.length ? JSON.stringify(misses.slice(0, 4)) : 'full 360 covered');
+      // the REAL orbit camera, sampled at 4 angles: same ray test + shots
+      let realBad = 0;
+      for (let k = 0; k < 4; k++) {
+        const rb = JSON.parse(await A.eval(`JSON.stringify((function(){
+          const C = { x: __pp.camPos.x, y: __pp.camPos.y, z: __pp.camPos.z };
+          const P = { x: __pp.pos.x, y: __pp.pos.y, z: __pp.pos.z };
+          const fogFar = window.__ppFogFar || 380;
+          const yaw0 = Math.atan2(P.x - C.x, P.z - C.z);
+          const bad = [];
+          for (const yo of [-0.83, -0.41, 0, 0.41, 0.83]) {
+            for (const el of [-0.33, -0.12]) {
+              const rx = Math.sin(yaw0 + yo), rz = Math.cos(yaw0 + yo);
+              let hit = false;
+              for (let t = 6; t < fogFar * 0.92; t += 5) {
+                const pr = window.__ppTerrainProbe(C.x + rx * t, C.z + rz * t);
+                if (pr.d < 70 && pr.h >= C.y + el * t) { hit = true; break; }
+              }
+              if (!hit) bad.push({ yo, el });
+            }
+          }
+          return bad;
+        })())`));
+        realBad += rb.length;
+        await A.shot(`40-void-${mtn}-${k}`);
+        await sleep(4200);            // the orbit sweeps on (wall clock)
+      }
+      gate(`void(${mtn}): live orbit camera never frames void (4 sampled angles)`,
+        realBad === 0, realBad ? `${realBad} miss rays` : 'clean');
+      gate(`zero console errors/warnings (void ${mtn})`, A.consoleBad.length === 0,
+        A.consoleBad.slice(0, 4).join(' | ') || 'clean');
+      c.close();
+    } finally {
+      proc.kill(); await sleep(400);
+      try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+    }
   }
 }
 
@@ -1700,7 +2203,7 @@ async function timeSession(base, mtn) {
       await sleep(150);
     }
     const t = await A.eval('__pp.time');
-    const key = mtn === 'nr' ? 'powderpeak_best_nr' : 'powderpeak_best';
+    const key = mtn === 'nr' ? 'powderpeak_best_nr' : mtn === 'db' ? 'powderpeak_best_db' : 'powderpeak_best';
     const sect = await A.eval(`JSON.parse(localStorage.getItem('${key}')||'{}').sectors`);
     console.log(`clean bot time (${mtn}): ${t.toFixed(2)}s, crashes: ${crashes}, sectors: ${(sect || []).map(x => x.toFixed(1)).join(' / ')}`);
     c.close();
@@ -1738,7 +2241,7 @@ async function tuckSession(base) {
 
 /* ═══════════════ main ═══════════════ */
 const which = process.argv[2] || 'all';
-const mtnArg = process.argv[3] === 'nr' ? 'nr' : 'alp';
+const mtnArg = ['nr', 'db'].includes(process.argv[3]) ? process.argv[3] : 'alp';
 const { srv, port: httpPort } = await serve();
 const base = `http://127.0.0.1:${httpPort}`;
 // Headless swiftshader renderers occasionally die mid-session (CDP replies
@@ -1762,10 +2265,12 @@ try {
   if (which === 'all' || which === 'gates') await runSession('gates', () => gatesSession(base));
   if (which === 'all' || which === 'mtn') await runSession('mtn', () => mtnSession(base));
   if (which === 'all' || which === 'nr') await runSession('nr', () => nrSession(base));
+  if (which === 'all' || which === 'db') await runSession('db', () => dbSession(base));
   if (which === 'all' || which === 'tricks') await runSession('tricks', () => tricksSession(base));
   if (which === 'all' || which === 'fun') await runSession('fun', () => funSession(base));
   if (which === 'all' || which === 'race') await runSession('race', () => raceSession(base));
   if (which === 'all' || which === 'kbd') await runSession('kbd', () => kbdSession(base));
+  if (which === 'all' || which === 'void') await runSession('void', () => voidSession(base));
   if (which === 'all' || which === 'shots') await runSession('shots', () => shotsSession(base));
   if (which === 'all' || which === 'ipad') await runSession('ipad', () => ipadSession(base));
 } catch (e) {

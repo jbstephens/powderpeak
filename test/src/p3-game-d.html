@@ -7,11 +7,12 @@ const TL = {
   mode: 'ground', heading: 0, s: 0, u: 0, time: 0,
   air: false, trick: false, tricks: 0, wobble: false,
   mountain: '', trickName: '', airTricks: 0, boostPct: 0,
-  snowman: false, goldArch: false, selectSel: 0,
+  snowman: false, goldArch: false, selectSel: 0, sectors: 4,
   camRight: { x: 0, z: 0 },   // the REAL render camera's screen-right, in world
   camPos: { x: 0, y: 0, z: 0 },
   ndcX: 0,                    // P1 skier's screen-x in P1's REAL render camera
-  perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0, sectorCalls: [0, 0, 0, 0], sectorTris: [0, 0, 0, 0] },
+  perf: { calls: 0, tris: 0, maxCalls: 0, maxTris: 0,
+          sectorCalls: [0, 0, 0, 0, 0, 0], sectorTris: [0, 0, 0, 0, 0, 0] },
   race: { prompt: false, joined: false, on: false, p2src: '', winner: -1,
           finished: [false, false], times: [0, 0], gap: 0, rb: [1, 1] },
   p2: { pos: { x: 0, y: 0, z: 0 }, speed: 0, s: 0, u: 0, heading: 0, time: 0,
@@ -36,6 +37,7 @@ function syncTelemetry() {
   TL.tricks = p1.airN;
   TL.wobble = p1.wobbleT > 0;
   TL.mountain = W ? W.cfg.id : '';
+  TL.sectors = NSEC;
   TL.trickName = p1.trickName;
   TL.airTricks = p1.airN;
   TL.boostPct = p1.boostPct;
@@ -77,7 +79,14 @@ function syncTelemetry() {
 }
 
 /* ═════════════════ mountain switching ═════════════════ */
-const MTN_ORDER = ['alp', 'nr'];
+// (MTN_ORDER lives beside the MTN table in part a)
+const sectorTotEl = el('sectorTot');
+const rsecTEl = [el('rsecT0'), el('rsecT1')];
+function ppProbe(x, z) {   // read-only terrain query for the harness
+  const ti = W.terrainInfo(x, z);
+  return { h: ti.h, d: ti.d, u: ti.u };
+}
+window.__ppTerrainProbe = ppProbe;
 function setMountain(id) {
   const nw = WORLDS[id];
   if (W && W !== nw) {
@@ -91,11 +100,15 @@ function setMountain(id) {
   W = nw;
   NSM = W.NSM;
   CX = W.CX; CZ = W.CZ; CY = W.CY; CDX = W.CDX; CDZ = W.CDZ; CRX = W.CRX; CRZ = W.CRZ;
-  CCURV = W.CCURV; CW = W.CW; CBANK = W.CBANK; CRAMP = W.CRAMP; CWL = W.CWL; CWR = W.CWR; CSTYLE = W.CSTYLE;
+  CCURV = W.CCURV; CW = W.CW; CBANK = W.CBANK; CRAMP = W.CRAMP; CWL = W.CWL; CWR = W.CWR; CSTYLE = W.CSTYLE; CMOG = W.CMOG;
   GATES = W.GATES; RAMPS = W.RAMPS; FINISH_I = W.FINISH_I;
   terrainInfo = W.terrainInfo; terrainH = W.terrainH; terrainGrad = W.terrainGrad;
   OBS = W.obs; MEDALS = W.cfg.medals; BEST_KEY = W.cfg.bestKey; MP = W.cfg.phys;
   best = W.best;
+  NSEC = GATES.length + 1;
+  sectorTotEl.textContent = String(NSEC);
+  rsecTEl[0].textContent = String(NSEC);
+  rsecTEl[1].textContent = String(NSEC);
   W.sky.visible = true;
   W.peaksMesh.visible = true;
   W.snowman.mesh.visible = !W.snowman.hit;
@@ -119,14 +132,18 @@ function setMountain(id) {
   window.__ppSnowman = W.dump.snowman;
   window.__ppPeaks = W.dump.peaks;
   window.__ppGateBoxes = W.dump.gateBoxes;
+  window.__ppFeatures = W.dump.features;
+  window.__ppFogFar = W.dump.fogFar;
   // stale spray from the other mountain never lingers
   for (let i = 0; i < SPRAY_N; i++) { sprayLife[i] = 0; sprayPos[i * 3 + 1] = -999; }
   placeAtSample(players[0], 2);
 }
 
 /* ═════════════════ mountain select screen ═════════════════ */
+const mcardRowEl = el('mcardRow');
 function updateSelectCards() {
-  for (let i = 0; i < 2; i++) {
+  const N = MTN_ORDER.length;
+  for (let i = 0; i < N; i++) {
     el('mcard' + i).className = 'mcard' + (selectSel === i ? ' sel' : '');
     const Wd = WORLDS[MTN_ORDER[i]];
     const b = Wd.best;
@@ -136,6 +153,17 @@ function updateSelectCards() {
     mel.textContent = md ? (md + ' MEDAL') : ' ';
     mel.className = 'mmedal ' + md.toLowerCase();
   }
+  // if the row outgrows the 1280 stage, slide it to center the selection
+  // (3 cards fit; a 4th+ mountain gets the carousel for free)
+  const CARD_W = 350, GAP = 36;
+  const rowW = N * CARD_W + (N - 1) * GAP;
+  let off = 0;
+  if (rowW > 1240) {
+    const cx = selectSel * (CARD_W + GAP) + CARD_W / 2;
+    const lim = (rowW - 1240) / 2;
+    off = clamp(rowW / 2 - cx, -lim, lim);
+  }
+  mcardRowEl.style.transform = 'translateX(' + off.toFixed(1) + 'px)';
 }
 function gotoSelect() {
   setSplit(false);
@@ -406,7 +434,7 @@ function updateHUD() {
       const pl = players[i], o = players[1 - i], L = lastRH[i];
       const kmh = Math.round(pl.v * 3.6);
       if (kmh !== L.kmh) { L.kmh = kmh; rnumEl[i].textContent = String(kmh); }
-      const sec = String(Math.min(3, pl.gateIdx) + 1);
+      const sec = String(Math.min(NSEC - 1, pl.gateIdx) + 1);
       if (sec !== L.sec) { L.sec = sec; rsecN[i].textContent = sec; }
       let gtxt, gcls;
       if (pl.finished || o.finished) { gtxt = ''; gcls = 'rgap'; }
@@ -484,8 +512,8 @@ function menuLogic(dt) {
       if (e0.selCard === selectSel) e0.confirm = true;
       else { selectSel = e0.selCard; updateSelectCards(); sfx.menuMove(); }
     }
-    if (e0.left && selectSel !== 0) { selectSel = 0; updateSelectCards(); sfx.menuMove(); }
-    else if (e0.right && selectSel !== 1) { selectSel = 1; updateSelectCards(); sfx.menuMove(); }
+    if (e0.left && selectSel > 0) { selectSel--; updateSelectCards(); sfx.menuMove(); }
+    else if (e0.right && selectSel < MTN_ORDER.length - 1) { selectSel++; updateSelectCards(); sfx.menuMove(); }
     if (e0.confirm) {
       setMountain(MTN_ORDER[selectSel]);
       sfx.jingle();
@@ -530,7 +558,7 @@ function perfTelemetry(calls, tris) {
   if (calls > TL.perf.maxCalls) TL.perf.maxCalls = calls;
   if (tris > TL.perf.maxTris) TL.perf.maxTris = tris;
   if (state === S_RUN) {
-    const s2 = clamp(players[0].gateIdx, 0, 3);
+    const s2 = clamp(players[0].gateIdx, 0, 5);
     if (calls > TL.perf.sectorCalls[s2]) TL.perf.sectorCalls[s2] = calls;
     if (tris > TL.perf.sectorTris[s2]) TL.perf.sectorTris[s2] = tris;
   }
@@ -627,7 +655,7 @@ function frame(now) {
 /* ═════════════════ boot ═════════════════ */
 // vista thumbnails for the select cards — rendered once from the REAL scene
 function renderVistas() {
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < MTN_ORDER.length; i++) {
     setMountain(MTN_ORDER[i]);
     const ci = 60;
     camera.position.set(CX[ci] + 52, CY[ci] + 22, CZ[ci]);
@@ -649,6 +677,7 @@ renderVistas();
 setMountain(lastMtnId);
 gotoTitle();
 syncTelemetry();
+window.__ppBootMs = performance.now() - BOOT_T0;   // three worlds, built
 requestAnimationFrame(frame);
 
 })();
