@@ -478,7 +478,22 @@ function setSplit(on) {
   splitOn = on;
   document.body.classList.toggle('race', on);
   rigs[1].group.visible = on;
-  rigs[1].blobShadow.visible = on && !LOOK;   // look pass: real shadows
+  /* PP-LOOK-2, Pi-measured: in a 2P race the TWO per-viewport shadow
+     passes are the one thing the console can't afford — 47.5fps with
+     them, 60.2 the instant they stop (ACES/lambert/post all innocent,
+     A/B'd live on the kiosk). So split mode trades the real shadow for
+     the painted blobs under BOTH skiers; 1P keeps the 1024 map. The
+     material recompile happens here, at the select screen, where the
+     one-time hitch is invisible. */
+  if (LOOK) {
+    renderer.shadowMap.enabled = !on;
+    sunLight.castShadow = !on;
+    rigs[0].blobShadow.visible = on;
+    rigs[1].blobShadow.visible = on;
+    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
+  } else {
+    rigs[1].blobShadow.visible = on;
+  }
   if (LOOK && !on) {   // no stale P2 tree casters haunting later 1P runs
     lookCasters[1].geo.setDrawRange(0, 0);
     lookCasters[1].lastX = 1e9;
