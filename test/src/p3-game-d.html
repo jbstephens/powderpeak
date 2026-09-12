@@ -320,6 +320,11 @@ function updateSkierFor(pl, rig, dt) {
   rig.legL.scale.y = legScale; rig.legR.scale.y = legScale;
   rig.torso.position.y = hipY - 0.02;
   rig.torso.rotation.x = 0.35 + 0.85 * pose.crouch - 0.30 * pose.air;
+  // head counter-rotation, mapped off the SAME pose outputs: undo most of
+  // the torso pitch so a full tuck still looks DOWNHILL (not at the skis),
+  // and counter half the carve roll so the goggles stay level in a turn.
+  rig.head.rotation.x = -0.72 * rig.torso.rotation.x + 0.18;
+  rig.head.rotation.z = -0.45 * pose.roll;
   const spread = 0.25 + pose.wedge * 0.75 + pose.air * 0.95;
   rig.armL.rotation.z = -spread; rig.armR.rotation.z = spread;
   rig.armL.rotation.x = -0.3 - pose.crouch * 0.95 + pose.air * 0.5;

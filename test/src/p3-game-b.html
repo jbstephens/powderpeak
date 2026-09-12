@@ -994,40 +994,131 @@ for (const id of MTN_ORDER) {
 }
 lookTreeLog = null;   // tree logging is a build-time-only channel
 
-/* ═════════════════ the skiers — one full rig per player ═════════════════ */
+/* ═════════════════ the skiers — one full rig per player ═════════════════
+   Chunky low-poly skier (Lonely Mountains energy), replacing the old ten
+   plain boxes. Every colour lives in VERTEX colours on ONE shared Lambert
+   material and each articulated part is ONE merged mesh — 8 meshes/skier
+   vs the old 10, so the colour pass got CHEAPER while the silhouette
+   gained a helmet + goggles, mittens gripping poles with baskets, bent
+   knees, chunky boots clipped into bindings, and shovel-tipped skis.
+   Pivots and part names are UNCHANGED: the pose driver (updateSkierFor)
+   keeps driving the exact same joints. */
+const matSkier = new THREE.MeshLambertMaterial({ vertexColors: true });
 function buildSkierRig(jacketCol, skiCol) {
   const group = new THREE.Group();
   group.rotation.order = 'YXZ';
   scene.add(group);
-  const matJacket = new THREE.MeshLambertMaterial({ color: jacketCol });
-  const matPants = new THREE.MeshLambertMaterial({ color: 0x232744 });
-  const matHelmet = new THREE.MeshLambertMaterial({ color: 0xf4f6f8 });
-  const matSki = new THREE.MeshLambertMaterial({ color: skiCol });
-  const matPole = new THREE.MeshLambertMaterial({ color: 0x888a99 });
-  function partBox(sx, sy, sz, mat, ox, oy, oz) {
-    const g = new THREE.BoxGeometry(sx, sy, sz);
-    if (ox || oy || oz) g.translate(ox || 0, oy || 0, oz || 0);
-    return new THREE.Mesh(g, mat);
+  // P2 recolor = these two params, baked into the vertex colours below.
+  const jacket = new THREE.Color(jacketCol);
+  const jDark = jacket.clone().multiplyScalar(0.72);   // hem/collar/sleeve shade
+  const PANTS = 0x232744, PANTS_D = 0x1a1d33, DARK = 0x2c3049, BOOT = 0x363b56,
+        HELMET = 0xf4f6f8, BAND = 0x1e2130, GOGGLE = 0x8fe3ff, POLE = 0x9aa0b2,
+        BIND = 0x20243a, CHIN = 0xcf9a72, ZIP = 0xe8ecf4;
+  // → non-indexed + flat facet normals + one solid vertex colour per part
+  function vcPart(geo, col) {
+    const g = geo.toNonIndexed(); geo.dispose();
+    g.computeVertexNormals();
+    const n = g.attributes.position.count, a = new Float32Array(n * 3);
+    const c = new THREE.Color(col);
+    for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    return g;
   }
-  const skiL = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
-  const skiR = partBox(0.16, 0.06, 1.95, matSki, 0, 0, 0.25);
+  const vcBox = (sx, sy, sz, col) => vcPart(new THREE.BoxGeometry(sx, sy, sz), col);
+  const vcCyl = (rt, rb, h, seg, col, open) =>
+    vcPart(new THREE.CylinderGeometry(rt, rb, h, seg, 1, !!open), col);
+  function vcMesh(parts) {          // merge parts → one mesh, one draw call
+    let total = 0;
+    for (const p of parts) total += p.attributes.position.count;
+    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3),
+          col = new Float32Array(total * 3);
+    let o = 0;
+    for (const p of parts) {
+      pos.set(p.attributes.position.array, o);
+      nor.set(p.attributes.normal.array, o);
+      col.set(p.attributes.color.array, o);
+      o += p.attributes.position.count * 3;
+      p.dispose();
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return new THREE.Mesh(g, matSkier);
+  }
+
+  // skis — pivot at the binding (same as before). Long body, upturned
+  // shovel, kicked tail, binding block, and a chunky two-piece BOOT that
+  // rides the ski (clipped in) so wedge/air ski articulation carries it;
+  // the pant cuff overlaps the boot cuff so the leg never detaches.
+  function skiMesh() {
+    return vcMesh([
+      vcBox(0.16, 0.05, 2.02, skiCol).translate(0, 0, 0.25),
+      vcBox(0.15, 0.045, 0.34, skiCol).rotateX(-0.38).translate(0, 0.055, 1.38),
+      vcBox(0.15, 0.045, 0.20, skiCol).rotateX(0.30).translate(0, 0.032, -0.80),
+      vcBox(0.06, 0.014, 1.30, jacket).translate(0, 0.03, 0.22),   // topsheet stripe
+      vcBox(0.11, 0.08, 0.30, BIND).translate(0, 0.05, 0.02),      // binding block
+      vcBox(0.17, 0.13, 0.31, BOOT).translate(0, 0.145, 0.03),     // boot shell
+      vcBox(0.16, 0.15, 0.22, BOOT).rotateX(-0.28).translate(0, 0.27, 0),   // cuff
+      vcBox(0.175, 0.05, 0.23, jDark).rotateX(-0.28).translate(0, 0.315, -0.01), // strap
+    ]);
+  }
+  const skiL = skiMesh(), skiR = skiMesh();
   skiL.position.set(-0.21, 0.04, 0); skiR.position.set(0.21, 0.04, 0);
-  const legL = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
-  const legR = partBox(0.17, 0.6, 0.22, matPants, 0, -0.3, 0);
+
+  // legs — pivot at the hip, geometry spans y 0..-0.61 (the pose driver
+  // squashes scale.y for crouch). Built-in knee bend: thigh forward,
+  // shin back down to the boot top.
+  function legMesh() {
+    return vcMesh([
+      vcBox(0.18, 0.36, 0.21, PANTS).rotateX(-0.20).translate(0, -0.16, 0.02),
+      vcBox(0.155, 0.34, 0.17, PANTS).rotateX(0.24).translate(0, -0.45, 0.035),
+      vcBox(0.16, 0.12, 0.11, PANTS_D).translate(0, -0.305, 0.115), // knee pad
+    ]);
+  }
+  const legL = legMesh(), legR = legMesh();
   legL.position.set(-0.19, 0.95, 0); legR.position.set(0.19, 0.95, 0);
-  const torso = partBox(0.46, 0.58, 0.3, matJacket, 0, 0.29, 0);
+
+  // torso — pivot at the hip: jacket hem, chest with a built-in forward
+  // lean, zip, collar.
+  const torso = vcMesh([
+    vcBox(0.42, 0.20, 0.28, jDark).translate(0, 0.10, 0),
+    vcBox(0.46, 0.36, 0.31, jacket).rotateX(0.10).translate(0, 0.36, 0.02),
+    vcBox(0.055, 0.32, 0.022, ZIP).translate(0, 0, 0.155).rotateX(0.10).translate(0, 0.36, 0.02),
+    vcBox(0.28, 0.11, 0.24, jDark).rotateX(0.10).translate(0, 0.565, 0.05),
+  ]);
   torso.position.set(0, 0.92, 0);
-  const head = partBox(0.24, 0.26, 0.26, matHelmet);
-  head.position.set(0, 0.72, 0.02);
+
+  // head — pivot at the neck (the pose driver counter-rotates it so the
+  // skier keeps looking downhill): faceted helmet dome, dark goggle band,
+  // reflective goggle strip, chin.
+  const head = vcMesh([
+    vcCyl(0.06, 0.068, 0.10, 6, DARK).translate(0, 0.03, 0.01),
+    vcPart(new THREE.SphereGeometry(0.165, 8, 6), HELMET).scale(1, 0.94, 1.06).translate(0, 0.16, 0.01),
+    vcCyl(0.172, 0.172, 0.075, 8, BAND, true).translate(0, 0.125, 0.01),
+    vcBox(0.235, 0.088, 0.06, GOGGLE).rotateX(-0.08).translate(0, 0.13, 0.175),
+    vcBox(0.13, 0.085, 0.09, CHIN).translate(0, 0.045, 0.10),
+  ]);
+  head.position.set(0, 0.60, 0.045);
   torso.add(head);
-  const armL = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
-  const armR = partBox(0.12, 0.52, 0.12, matJacket, 0, -0.26, 0);
-  armL.position.set(-0.29, 0.52, 0); armR.position.set(0.29, 0.52, 0);
+
+  // arms — pivot at the shoulder: jacket sleeve with a bent forearm, a
+  // mitten, and the SKI POLE gripped in it (shaft + basket ring merged
+  // into the arm mesh, so every arm sweep the pose driver already does
+  // carries the pole: tuck sweeps them back, air flares them out).
+  function armMesh() {
+    return vcMesh([
+      vcBox(0.17, 0.16, 0.17, jacket).translate(0, -0.02, 0),                      // shoulder
+      vcBox(0.135, 0.30, 0.145, jacket).rotateX(-0.12).translate(0, -0.19, 0.005), // upper
+      vcBox(0.12, 0.27, 0.125, jDark).rotateX(-0.55).translate(0, -0.40, 0.075),   // forearm
+      vcBox(0.135, 0.13, 0.17, DARK).translate(0, -0.525, 0.165),                  // mitten
+      vcCyl(0.017, 0.017, 0.96, 5, POLE).translate(0, -0.48, 0).rotateX(0.5).translate(0, -0.525, 0.165),
+      vcCyl(0.055, 0.055, 0.022, 6, DARK).translate(0, -0.78, 0).rotateX(0.5).translate(0, -0.525, 0.165),
+    ]);
+  }
+  const armL = armMesh(), armR = armMesh();
+  armL.position.set(-0.31, 0.475, 0.02); armR.position.set(0.31, 0.475, 0.02);
   torso.add(armL); torso.add(armR);
-  const poleL = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
-  const poleR = partBox(0.035, 0.03, 0.95, matPole, 0, 0, -0.4);
-  poleL.position.set(0, -0.5, 0); poleR.position.set(0, -0.5, 0);
-  armL.add(poleL); armR.add(poleR);
   group.add(skiL, skiR, legL, legR, torso);
   // soft blob shadow that hugs the snow
   const blobShadow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 12),
@@ -1043,7 +1134,7 @@ function buildSkierRig(jacketCol, skiCol) {
     blobShadow.visible = false;
     for (const m of [skiL, skiR, legL, legR, torso, head]) m.castShadow = true;
   }
-  return { group, skiL, skiR, legL, legR, torso, armL, armR, blobShadow,
+  return { group, skiL, skiR, legL, legR, torso, head, armL, armR, blobShadow,
     pose: { crouch: 0.3, wedge: 0, air: 0, pitch: 0, roll: 0, crashSpin: 0 } };
 }
 // P1 rides the classic red kit; P2 a teal jacket on sunset skis. Both rigs
