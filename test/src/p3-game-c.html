@@ -168,6 +168,9 @@ function ensureAudio() {
   carveGain = ac.createGain(); carveGain.gain.value = 0;
   carveSrc.connect(carveFilt).connect(carveGain).connect(master);
   carveSrc.start();
+  /* read-only telemetry: the harness asserts the motion loop actually
+     goes quiet in the air (never a hook that stubs the mechanic) */
+  window.__ppAudio = () => ({ wind: windGain.gain.value, carve: carveGain.gain.value });
 }
 function tone(freq, dur, type, vol, sweepTo, when) {
   if (!ac) return;
@@ -475,7 +478,11 @@ function setSplit(on) {
   splitOn = on;
   document.body.classList.toggle('race', on);
   rigs[1].group.visible = on;
-  rigs[1].blobShadow.visible = on;
+  rigs[1].blobShadow.visible = on && !LOOK;   // look pass: real shadows
+  if (LOOK && !on) {   // no stale P2 tree casters haunting later 1P runs
+    lookCasters[1].geo.setDrawRange(0, 0);
+    lookCasters[1].lastX = 1e9;
+  }
   const asp = (on || SPLIT2) ? (VW / 2) / VH : VW / VH;
   camera.aspect = asp; camera.updateProjectionMatrix();
   cam2.aspect = asp; cam2.updateProjectionMatrix();

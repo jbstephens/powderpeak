@@ -8,6 +8,13 @@
 //   /opt/homebrew/bin/node test/harness.mjs all     (or: gates mtn nr tricks fun race kbd shots ipad)
 //
 // Requires node >= 22 (global WebSocket).
+//
+// Since PP-LOOK-1 the look pass defaults ON, so every boot here pins
+// ?look=0: this suite verifies GAME LOGIC, and its timing-window gates
+// (boot budget, brake-scrub) measure wall time — under swiftshader the
+// look pass slows frames enough to starve sim ticks and fake failures
+// (a frame is not game time). The look-ON path is owned by
+// test/look-verify.mjs, and real-hardware perf verdicts by the Pi.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -356,7 +363,7 @@ async function gatesSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(600);
 
     gate('boot: telemetry present, state=title', await A.eval(`__pp.state`) === 'title');
@@ -629,7 +636,7 @@ async function kbdSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(400);
     gate('kbd: boots to title', await A.eval('__pp.state') === 'title');
     await A.tapKey('Enter', 'Enter', 13);
@@ -729,7 +736,7 @@ async function shotsSession(base) {
     const A = makeApi(c);
     await A.init(); await A.stubPad();
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-    await A.nav(base + '/index.html?turbo=3&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=3&fx=full');
     await sleep(1500);
     await A.shot('01-title');
     // mountain select screen
@@ -849,7 +856,7 @@ async function shotsSession(base) {
     await A.eval('window.__ppTurbo = 3');
     // ── gold-trim arch (seed a gold best, reload, start a run) ──
     await A.eval(`window.__ppTurbo = 1; localStorage.setItem('powderpeak_best', JSON.stringify({time:88, sectors:[20,25,25,18]}))`);
-    await A.nav(base + '/index.html?turbo=3&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=3&fx=full');
     await sleep(800);
     await tapUntil(A, 0, `__pp.state==='select'`, 'select for gold arch');
     for (let i = 0; i < 6 && await A.eval('__pp.selectSel') !== 0; i++) await A.tapButton(14);
@@ -858,7 +865,7 @@ async function shotsSession(base) {
     await sleep(250);
     await A.shot('16-gold-arch');
     // ── DIAMONDBACK shots ──
-    await A.nav(base + '/index.html?turbo=3&fx=full&r=9');
+    await A.nav(base + '/index.html?look=0&turbo=3&fx=full&r=9');
     await sleep(800);
     await tapUntil(A, 0, `__pp.state==='select'`, 'select for db shots');
     await sleep(400);
@@ -914,7 +921,7 @@ async function ipadSession(base) {
     await A.init();
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 1366, deviceScaleFactor: 1, mobile: true });
     await c.send('Emulation.setTouchEmulationEnabled', { enabled: true });
-    await A.nav(base + '/index.html?fx=full');
+    await A.nav(base + '/index.html?look=0&fx=full');
     await sleep(1200);
     // tap to start (touch source → touch UI visible). Same stall guard as
     // keys: if the CDP input pipeline stops ACKing, drive the element's own
@@ -1009,7 +1016,7 @@ async function mtnSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(500);
     // pad: south opens select, east backs out
     await tapUntil(A, 0, `__pp.state==='select'`, 'select opens');
@@ -1037,14 +1044,14 @@ async function mtnSession(base) {
       await A.eval(`localStorage.getItem('powderpeak_mtn')`) === 'nr');
     // START at title quick-starts the LAST-PLAYED mountain (no select)
     await A.eval('window.__ppTurbo = 1');   // cool the hot sim before re-nav
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(500);
     await tapUntil(A, 9, `__pp.state==='countdown'||__pp.state==='run'`, 'quick start');
     gate('select: START at title quick-starts last-played (NIGHT RIDGE)',
       await A.eval('__pp.mountain') === 'nr');
     // keyboard path: Enter → arrows → Esc backs out → Enter → Enter
     await A.eval('window.__ppTurbo = 1');
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(500);
     await A.tapKey('Enter', 'Enter', 13);
     await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select');
@@ -1066,7 +1073,7 @@ async function mtnSession(base) {
     gate('select: keyboard confirm starts ALPENGLOW', await A.eval('__pp.mountain') === 'alp');
     // ── the third card: DIAMONDBACK by pad, by keyboard, and quick-start ──
     await A.eval('window.__ppTurbo = 1');
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=4');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=4');
     await sleep(500);
     await tapUntil(A, 0, `__pp.state==='select'`, 'select for db');
     gate('select: dpad-right twice highlights DIAMONDBACK',
@@ -1081,14 +1088,14 @@ async function mtnSession(base) {
       await A.eval(`localStorage.getItem('powderpeak_mtn')`) === 'db');
     gate('select: DIAMONDBACK runs 6 sectors', await A.eval('__pp.sectors') === 6);
     await A.eval('window.__ppTurbo = 1');
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=5');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=5');
     await sleep(500);
     await tapUntil(A, 9, `__pp.state==='countdown'||__pp.state==='run'`, 'db quick start');
     gate('select: START at title quick-starts last-played (DIAMONDBACK)',
       await A.eval('__pp.mountain') === 'db');
     // keyboard reaches the third card too
     await A.eval('window.__ppTurbo = 1');
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=6');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=6');
     await sleep(500);
     await A.tapKey('Enter', 'Enter', 13);
     await A.waitFor(`__pp.state==='select'`, 6000, 'kbd select for db');
@@ -1112,15 +1119,15 @@ async function mtnSession(base) {
     const c = await pageSession(g2.port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await A.eval(`localStorage.setItem('powderpeak_best', JSON.stringify({time:90, sectors:[20,25,27,18]}))`);
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=2');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=2');
     await sleep(500);
     await startFromTitle(A, 'alp');
     gate('gold arch: GOLD best renders the trim (telemetry flag)',
       await A.eval('__pp.goldArch') === true);
     await A.eval(`window.__ppTurbo = 1; localStorage.setItem('powderpeak_best', JSON.stringify({time:120, sectors:[28,32,35,25]}))`);
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=3');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=3');
     await sleep(500);
     await startFromTitle(A, 'alp');
     gate('gold arch: non-gold best leaves the trim off',
@@ -1142,7 +1149,7 @@ async function nrSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=10&fx=full');
     await sleep(500);
     await startFromTitle(A, 'nr');
     gate('nr: run starts on NIGHT RIDGE', await A.eval('__pp.mountain') === 'nr');
@@ -1205,7 +1212,7 @@ async function dbSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=10&fx=full');
     await sleep(500);
     await startFromTitle(A, 'db');
     gate('db: run starts on DIAMONDBACK', await A.eval('__pp.mountain') === 'db');
@@ -1472,7 +1479,7 @@ async function tricksSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(500);
     await startFromTitle(A, 'alp');
     await A.installBot();
@@ -1590,7 +1597,7 @@ async function funSession(base) {
     await A.init(); await A.stubPad();
     for (const m of ['alp', 'nr', 'db']) {
       try { await A.eval('window.__ppTurbo = 1'); } catch {}
-      await A.nav(base + '/index.html?turbo=8&fx=full');
+      await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
       await sleep(500);
       await startFromTitle(A, m);
       await A.installBot();
@@ -1702,10 +1709,10 @@ async function raceSession(base) {
     const A = makeApi(c);
     await A.init(); await A.stubPad();
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await A.eval(`localStorage.setItem('powderpeak_best', ${JSON.stringify(seedAlp)});` +
                  `localStorage.setItem('powderpeak_best_nr', ${JSON.stringify(seedNr)});`);
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=2');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=2');
     await sleep(500);
 
     /* ── join / un-join on the mountain select ── */
@@ -1948,7 +1955,7 @@ async function raceSession(base) {
 
     /* ── keyboard-as-P2 (desktop): joins when P1 is on a pad ── */
     await A.eval('window.__ppTurbo = 1');
-    await A.nav(base + '/index.html?turbo=8&fx=full&r=3');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full&r=3');
     await sleep(500);
     await tapUntil(A, 0, `__pp.state==='select'`, 'select (kbd join)');   // pad0 use → P1 on pad
     for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapKey('Enter', 'Enter', 13);
@@ -2003,7 +2010,7 @@ async function raceSession(base) {
       const A = makeApi(c);
       await A.init(); await A.stubPad();
       await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-      await A.nav(base + '/index.html?turbo=10&fx=full');
+      await A.nav(base + '/index.html?look=0&turbo=10&fx=full');
       await sleep(500);
       await tapUntil(A, 0, `__pp.state==='select'`, mtn + ' select');
       for (let i = 0; i < 6 && !(await A.eval('__pp.race.joined')); i++) await A.tapButton2(0);
@@ -2104,7 +2111,7 @@ async function voidSession(base) {
       const A = makeApi(c);
       await A.init(); await A.stubPad();
       await c.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
-      await A.nav(base + '/index.html?turbo=14&fx=full');
+      await A.nav(base + '/index.html?look=0&turbo=14&fx=full');
       await sleep(500);
       await startFromTitle(A, mtn);
       await A.installBot();
@@ -2188,7 +2195,7 @@ async function timeSession(base, mtn) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=10&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=10&fx=full');
     await sleep(400);
     await startFromTitle(A, mtn);
     await A.installBot();
@@ -2221,7 +2228,7 @@ async function tuckSession(base) {
     const c = await pageSession(port);
     const A = makeApi(c);
     await A.init(); await A.stubPad();
-    await A.nav(base + '/index.html?turbo=8&fx=full');
+    await A.nav(base + '/index.html?look=0&turbo=8&fx=full');
     await sleep(400);
     await startFromTitle(A, 'alp');
     await A.installBot();

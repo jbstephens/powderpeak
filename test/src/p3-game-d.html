@@ -121,6 +121,21 @@ function setMountain(id) {
   scene.background.setRGB(c.fog[0], c.fog[1], c.fog[2]);
   sunLight.color.set(c.lightSun); sunLight.intensity = c.lightInt;
   hemiLight.color.set(c.lightSky); hemiLight.groundColor.set(c.lightGnd);
+  if (LOOK) {   // lit-pipeline compensation (bake × lambert would darken)
+    const lt = LOOK_TUNE[c.id] || LOOK_TUNE.alp;
+    sunLight.intensity = c.lightInt * lt.sun;
+    hemiLight.intensity = lt.hemi;
+    renderer.toneMappingExposure = lt.exp;
+    if (lookPostMat) {   // per-mountain grade (post block builds below boot)
+      const U = lookPostMat.uniforms;
+      U.gain.value.fromArray(lt.gain);
+      U.lift.value.fromArray(lt.lift);
+      U.gamma.value.fromArray(lt.gamma);
+      U.sat.value = lt.sat;
+      U.vig.value = lt.vig;
+    }
+    lookCasters[0].lastX = 1e9; lookCasters[1].lastX = 1e9;   // force refill
+  }
   // HUD statics are per mountain
   drawProfile();
   bestChip.textContent = best ? fmtTime(best.time) : '--:--.--';
@@ -384,7 +399,18 @@ function updateVisuals(dt, now) {
   if (ac) {
     const duck = (state === S_PAUSE || state === S_TITLE || state === S_SELECT) ? 0.25 : 1;
     const vTop = splitOn ? Math.max(players[0].v, players[1].v) : players[0].v;
-    windGain.gain.value = Math.min(0.20, vTop * 0.006) * duck;
+    /* the snow only sings under skis that touch it: an airborne skier
+       feeds the motion loop nothing, so a jump goes quiet and the sound
+       returns the frame the skis bite again (John's law, 2026-09-12).
+       Short ramp instead of a hard set so the cut never clicks. */
+    let vWind = vTop;
+    if (state === S_RUN) {
+      vWind = 0;
+      if (!players[0].air) vWind = players[0].v;
+      if (splitOn && !players[1].air) vWind = Math.max(vWind, players[1].v);
+    }
+    const wTarget = Math.min(0.20, vWind * 0.006) * duck;
+    windGain.gain.value += (wTarget - windGain.gain.value) * Math.min(1, dt * 14);
     windFilt.frequency.value = 260 + vTop * 26;
     let cg = 0;
     if (state === S_RUN) {
@@ -578,8 +604,90 @@ fitStage();
    culling, combined budget ≤110 calls / ≤120k tris. Per-pass visibility
    handles per-player run state (each half sees its OWN snowman). */
 let frameCalls = 0, frameTris = 0;
+
+/* ═════ ?look=1 — one fullscreen post pass: grade + saturation + vignette ═══
+   Scene renders into a 720p target, then ONE quad to screen. Exactly one
+   pass. The whole chain is DISPLAY-REFERRED: PP's vertex colors are already
+   final sRGB values, the RT keeps its default LinearEncoding (= raw
+   pass-through) and renderer.outputEncoding is left at the default, so this
+   shader must NOT do a linear→sRGB convert at the end — that extra encode
+   is exactly what washed the first cut out. Order: black-point subtract →
+   per-channel gain → gamma contrast (undoes the ACES midtone lift) →
+   saturation (ACES desaturates) → vignette. In 2P split BOTH viewports land
+   in the same target first, so the grade covers the full frame once. */
+let lookRT = null, lookPostScene = null, lookPostCam = null, lookPostMat = null;
+if (LOOK) {
+  lookRT = new THREE.WebGLRenderTarget(VW, VH, { depthBuffer: true });
+  lookPostCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  lookPostMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: lookRT.texture },
+      // defaults = the ALPENGLOW grade; setMountain() swaps them per mountain
+      vig: { value: 0.31 }, sat: { value: 1.26 },
+      lift: { value: new THREE.Vector3(0.017, 0.017, 0.019) },
+      gain: { value: new THREE.Vector3(1.29, 1.26, 1.23) },
+      gamma: { value: new THREE.Vector3(1.34, 1.36, 1.38) },
+    },
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+    fragmentShader: [
+      'uniform sampler2D tDiffuse; uniform float vig, sat;',
+      'uniform vec3 lift, gain, gamma; varying vec2 vUv;',
+      'void main(){',
+      '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
+      '  c = max(vec3(0.0), (c - lift) * gain);         /* black point + gain */',
+      '  c = pow(c, gamma);                             /* contrast restore  */',
+      '  float g = dot(c, vec3(0.299, 0.587, 0.114));',
+      '  c = mix(vec3(g), c, sat);                      /* saturation        */',
+      '  vec2 d = vUv - 0.5;',
+      '  c *= 1.0 - vig * smoothstep(0.28, 0.72, dot(d, d) * 2.2); /* vignette */',
+      '  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);',
+      '}'].join('\n'),
+    depthTest: false, depthWrite: false,
+  });
+  lookPostScene = new THREE.Scene();
+  lookPostScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lookPostMat));
+  // flag-gated debug/verification handle (?look=1 only, like __pp itself):
+  // lets the harness count TRUE per-frame ops (incl. the shadow pass) and
+  // inspect/live-tune the look pipeline. Never present on the shipped path.
+  window.__ppLook = { renderer, scene, camera, sunLight, hemiLight, lookRT,
+    lookCasters, worldMat, postMat: lookPostMat, tune: LOOK_TUNE, rigs };
+}
+// scene→RT→graded quad; renderScene may issue several viewported renders.
+// Returns nothing; adds its draw work to frameCalls/frameTris.
+function lookPresent(renderScene) {
+  renderScene();
+  renderer.setRenderTarget(null);
+  renderer.render(lookPostScene, lookPostCam);
+  frameCalls += renderer.info.render.calls;
+  frameTris += renderer.info.render.triangles;
+}
+
 function renderRace() {
   frameCalls = 0; frameTris = 0;
+  if (LOOK) {
+    lookRT.scissorTest = true;
+    lookPresent(() => {
+      for (let i = 0; i < 2; i++) {
+        const pl = players[i];
+        const cam = i === 0 ? camera : cam2;
+        W.snowman.mesh.visible = !pl.smHit;
+        cullTilesFor(cam);
+        W.sky.position.copy(cam.position);
+        aimLookSun(pl.x, pl.y, pl.z);
+        updateLookCaster(i, pl.x, pl.z);
+        lookRT.viewport.set(i * (VW / 2), 0, VW / 2, VH);
+        lookRT.scissor.set(i * (VW / 2), 0, VW / 2, VH);
+        renderer.setRenderTarget(lookRT);
+        renderer.render(scene, cam);
+        frameCalls += renderer.info.render.calls;
+        frameTris += renderer.info.render.triangles;
+      }
+      lookRT.scissorTest = false;
+      lookRT.viewport.set(0, 0, VW, VH);
+      lookRT.scissor.set(0, 0, VW, VH);
+    });
+    return;
+  }
   renderer.setScissorTest(true);
   for (let i = 0; i < 2; i++) {
     const pl = players[i];
@@ -645,6 +753,18 @@ function frame(now) {
   } else if (SPLIT2) {
     renderSplitProbe();
     perfTelemetry(renderer.info.render.calls, renderer.info.render.triangles);
+  } else if (LOOK) {
+    frameCalls = 0; frameTris = 0;
+    lookPresent(() => {
+      const pl = players[0];
+      aimLookSun(pl.x, pl.y, pl.z);
+      updateLookCaster(0, pl.x, pl.z);
+      renderer.setRenderTarget(lookRT);
+      renderer.render(scene, camera);
+      frameCalls += renderer.info.render.calls;
+      frameTris += renderer.info.render.triangles;
+    });
+    perfTelemetry(frameCalls, frameTris);
   } else {
     renderer.render(scene, camera);
     perfTelemetry(renderer.info.render.calls, renderer.info.render.triangles);
@@ -668,7 +788,14 @@ function renderVistas() {
       const ddx = t.cx - cxp, ddz = t.cz - czp;
       t.mesh.visible = (ddx * ddx + ddz * ddz) < 270400;
     }
-    renderer.render(scene, camera);
+    if (LOOK) {   // thumbnails carry the graded look too
+      frameCalls = 0; frameTris = 0;
+      lookPresent(() => {
+        aimLookSun(CX[ci + 40], CY[ci + 40], CZ[ci + 40]);
+        renderer.setRenderTarget(lookRT);
+        renderer.render(scene, camera);
+      });
+    } else renderer.render(scene, camera);
     const tc = el('mthumb' + i);
     tc.getContext('2d').drawImage(canvas, 0, 0, VW, VH, 0, 0, tc.width, tc.height);
   }

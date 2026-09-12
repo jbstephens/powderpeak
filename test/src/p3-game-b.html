@@ -7,6 +7,21 @@ const renderer = new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(1);
 renderer.setSize(VW, VH, false);
+if (LOOK) {
+  // Color pipeline: filmic grade, DISPLAY-REFERRED end to end. PP's vertex
+  // colors are authored as FINAL sRGB display values, so the look pass must
+  // add exactly ZERO encode steps: outputEncoding stays at the renderer
+  // default (LinearEncoding = pass-through), the 720p render target keeps
+  // its default LinearEncoding, and the post shader writes its graded
+  // result straight out. Adding sRGBEncoding here — or an sRGB convert at
+  // the end of the post shader — re-encodes already-encoded colour and
+  // milks the whole game out (lifted blacks, pastel pines, dead sunset).
+  // ACES + the per-mountain grade below do all the shaping.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.02;   // setMountain() sets the real value
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+}
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xf2b1a6, 80, 380);
@@ -22,6 +37,57 @@ sunLight.position.set(-60, 45, -66);
 scene.add(sunLight);
 const hemiLight = new THREE.HemisphereLight(0xb8c4ff, 0xfff0e8, 0.65);
 scene.add(hemiLight);
+
+/* ?look=1 lit pipeline: SAME two lights, retuned per mountain, plus ONE
+   1024px PCF shadow map in a tight box that follows the skier. The baked
+   vertex colors already carry lighting — lambert multiplies on top — so
+   the sums below are tuned (via screenshots) until flag-ON reads as "the
+   same scene, graded and lit", never "darker". Terrain NEVER casts.
+
+   The grade runs AFTER ACES, which (on display-referred input) lifts the
+   midtones and rolls the highlights off — pretty, but low-contrast on its
+   own. So each mountain gets: `lift` = a black-point SUBTRACT that puts
+   the blacks back on the floor, `gain` = a per-channel white/tint push,
+   `gamma` = the contrast curve that undoes the ACES midtone lift, `sat`
+   = saturation restore (ACES desaturates), `vig` = corner falloff.  */
+const LOOK_TUNE = {   // per mountain: light multipliers, exposure, post grade
+  // ALPENGLOW: warm gain, the strongest contrast curve (ACES flattens the
+  // sunset hardest here) and the most saturation — the sunset must stay hot.
+  alp: { sun: 1.00, hemi: 0.75, exp: 1.02,
+         gain: [1.29, 1.26, 1.23], lift: [0.017, 0.017, 0.019],
+         gamma: [1.34, 1.36, 1.38], sat: 1.26, vig: 0.31 },
+  // NIGHT RIDGE: gain leans WARM to counter the blue moon hemi (a neutral
+  // gain + high sat turned the pines teal), gentle gamma so the night sky
+  // keeps its gradient instead of crushing to flat black.
+  nr:  { sun: 1.12, hemi: 0.80, exp: 0.98,
+         gain: [1.26, 1.21, 1.12], lift: [0.006, 0.006, 0.006],
+         gamma: [1.15, 1.15, 1.15], sat: 1.14, vig: 0.31 },
+  // DIAMONDBACK: neutral cold gain, deepest black point — the granite has
+  // to go steel-blue and heavy, not the flat mid-grey ACES leaves behind.
+  db:  { sun: 1.10, hemi: 0.62, exp: 0.95,
+         gain: [1.32, 1.31, 1.30], lift: [0.018, 0.018, 0.018],
+         gamma: [1.34, 1.34, 1.34], sat: 1.18, vig: 0.34 },
+};
+const LOOK_DIR = {    // shadow/light direction = each mountain's BAKE sun
+  alp: [-0.601, 0.451, -0.661], nr: [0.45, 0.66, -0.60], db: [0.28, 0.80, -0.53],
+};
+if (LOOK) {
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.set(1024, 1024);
+  const shc = sunLight.shadow.camera;   // ~70m box around the skier
+  shc.left = -35; shc.right = 35; shc.top = 35; shc.bottom = -35;
+  shc.near = 4; shc.far = 190;
+  shc.updateProjectionMatrix();
+  sunLight.shadow.bias = -0.0005;
+  scene.add(sunLight.target);
+}
+// aim the sun (and its shadow box) at a skier — called before every render
+function aimLookSun(px, py, pz) {
+  const d = LOOK_DIR[W.cfg.id] || LOOK_DIR.alp;
+  sunLight.position.set(px + d[0] * 90, py + d[1] * 90, pz + d[2] * 90);
+  sunLight.target.position.set(px, py, pz);
+  sunLight.target.updateMatrixWorld();
+}
 
 /* ─────────────── merged-geometry builders (baked lighting) ───────────────
    Every md carries its own bake function (md.shade) so ALPENGLOW geometry
@@ -89,7 +155,10 @@ function pushGlowQuad(md, cx, cy, cz, ux, uy, uz, vx, vy, vz, s, r, g, b) {
     md.c.push(r, g, b, 0, 0, 0, 0, 0, 0);
   }
 }
-const worldMat = new THREE.MeshBasicMaterial({ vertexColors: true });
+// look pass: the whole baked world swaps to lambert (same vertex colors,
+// now multiplied by real irradiance) — one material either way.
+const worldMat = LOOK ? new THREE.MeshLambertMaterial({ vertexColors: true })
+                      : new THREE.MeshBasicMaterial({ vertexColors: true });
 const glowMat = new THREE.MeshBasicMaterial({
   vertexColors: true, transparent: true, blending: THREE.AdditiveBlending,
   depthWrite: false, side: THREE.DoubleSide,
@@ -99,6 +168,9 @@ function md2mesh(md, mat) {
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(md.p), 3));
   geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(md.c), 3));
   geo.computeBoundingSphere();
+  // lambert needs real normals (missing attribute = zero vector = NaN after
+  // normalize = black world). Unshared tris → this bakes FLAT face normals.
+  if (LOOK) geo.computeVertexNormals();
   return new THREE.Mesh(geo, mat || worldMat);
 }
 
@@ -122,7 +194,12 @@ function pushBall(md, x, y, z, rad, r, g, b) {
   }
 }
 
+// look pass: tree positions are logged at build time so a tiny caster-only
+// mesh can follow the skier (trees live inside merged tiles, which must
+// never cast — the measured law is 1024px + CURATED casters).
+let lookTreeLog = null;
 function pushTree(md, x, z, gy, sc, tintR) {
+  if (lookTreeLog) lookTreeLog.push(x, z, gy, sc);
   const g1 = lerp(0.10, 0.16, tintR), g2 = lerp(0.29, 0.37, tintR), g3 = lerp(0.26, 0.30, tintR);
   pushBox(md, x, gy + 0.55 * sc, z, 0.34 * sc, 1.3 * sc, 0.34 * sc, tintR * 3, 0.30, 0.22, 0.17);
   pushCone(md, x, gy + 0.85 * sc, z, 1.60 * sc, 2.35 * sc, 6, g1, g2, g3);
@@ -165,6 +242,7 @@ function panelBar(md, o, ax, ay, az, bx, by, bz, x1, y1, x2, y2, hw, r, g, b, nx
 /* ═════════════ buildWorldScene(W) — meshes for one mountain ═════════════ */
 function buildWorldScene(W) {
   const cfg = W.cfg;
+  if (LOOK) { lookTreeLog = []; W.lookTrees = lookTreeLog; }
   const { NSM, NS, STEP, CX, CZ, CY, CDX, CDZ, CRX, CRZ, CW, CWL, CWR, CSTYLE, CRAMP, CSC,
     CMOG, GATES, RAMPS, DROPS, FINISH_I, SC, terrainH, terrainInfo, hash2, noise2 } = W;
   const R_LAT = 76;
@@ -670,6 +748,7 @@ function buildWorldScene(W) {
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     mesh.visible = false;
+    if (LOOK) mesh.receiveShadow = true;   // receives only — terrain NEVER casts
     scene.add(mesh);
     tiles.push({ mesh, cx: (TGX0 + tx + 0.5) * TILE, cz: (TGZ0 + tz + 0.5) * TILE });
   }
@@ -913,6 +992,7 @@ for (const id of MTN_ORDER) {
   buildWorldScene(Wd);
   WORLDS[id] = Wd;
 }
+lookTreeLog = null;   // tree logging is a build-time-only channel
 
 /* ═════════════════ the skiers — one full rig per player ═════════════════ */
 function buildSkierRig(jacketCol, skiCol) {
@@ -955,6 +1035,14 @@ function buildSkierRig(jacketCol, skiCol) {
   blobShadow.rotation.x = -Math.PI / 2;
   blobShadow.renderOrder = 1;
   scene.add(blobShadow);
+  if (LOOK) {
+    // the real 1024 shadow replaces the painted blob. Curated casters:
+    // only the silhouette parts cast — arms/poles are invisible in a soft
+    // 1024 shadow, and every caster is one more draw call in EVERY shadow
+    // pass (measured: full-rig casting put 2P at 117 calls, over the 110).
+    blobShadow.visible = false;
+    for (const m of [skiL, skiR, legL, legR, torso, head]) m.castShadow = true;
+  }
   return { group, skiL, skiR, legL, legR, torso, armL, armR, blobShadow,
     pose: { crouch: 0.3, wedge: 0, air: 0, pitch: 0, roll: 0, crashSpin: 0 } };
 }
@@ -963,6 +1051,64 @@ function buildSkierRig(jacketCol, skiCol) {
 const rigs = [buildSkierRig(0xff5964, 0xffd23e), buildSkierRig(0x2fb7c9, 0xff9d2e)];
 rigs[1].group.visible = false;
 rigs[1].blobShadow.visible = false;
+
+/* ?look=1 — curated tree shadow casters. One tiny caster-only mesh per
+   player: up to 12 simple cones re-filled from W.lookTrees whenever that
+   player has moved ~8m. colorWrite:false makes the color pass write
+   nothing (1 cheap call); the shadow pass draws the cones' depth. */
+const LOOK_CAST_N = 12, LOOK_CAST_R = 42;                 // trees, metres
+const LOOK_CONE_SEG = 5;                                  // 5 tris per tree
+function buildLookCaster() {
+  const pos = new Float32Array(LOOK_CAST_N * LOOK_CONE_SEG * 9);
+  const geo = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(pos, 3);
+  attr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', attr);
+  geo.setDrawRange(0, 0);
+  const mesh = new THREE.Mesh(geo,
+    new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }));
+  mesh.frustumCulled = false;
+  mesh.castShadow = true;
+  mesh.matrixAutoUpdate = false;         // world-space coordinates
+  scene.add(mesh);
+  return { mesh, pos, attr, geo, lastX: 1e9, lastZ: 1e9 };
+}
+const lookCasters = LOOK ? [buildLookCaster(), buildLookCaster()] : null;
+const lcBestD = new Float64Array(LOOK_CAST_N), lcBestI = new Int32Array(LOOK_CAST_N);
+function updateLookCaster(ci, px, pz) {
+  const C = lookCasters[ci];
+  const mdx = px - C.lastX, mdz = pz - C.lastZ;
+  if (mdx * mdx + mdz * mdz < 64) return;                 // refill every ~8m
+  C.lastX = px; C.lastZ = pz;
+  const T = W.lookTrees;
+  const R2 = LOOK_CAST_R * LOOK_CAST_R;
+  let n = 0;                                              // nearest-N insertion
+  for (let i = 0; i < T.length; i += 4) {
+    const dx = T[i] - px, dz = T[i + 1] - pz;
+    const d = dx * dx + dz * dz;
+    if (d > R2 || (n === LOOK_CAST_N && d >= lcBestD[n - 1])) continue;
+    let k = n < LOOK_CAST_N ? n : LOOK_CAST_N - 1;
+    while (k > 0 && lcBestD[k - 1] > d) { lcBestD[k] = lcBestD[k - 1]; lcBestI[k] = lcBestI[k - 1]; k--; }
+    lcBestD[k] = d; lcBestI[k] = i;
+    if (n < LOOK_CAST_N) n++;
+  }
+  const pos = C.pos;
+  let o = 0;
+  for (let t = 0; t < n; t++) {
+    const i = lcBestI[t];
+    const x = T[i], z = T[i + 1], gy = T[i + 2], sc = T[i + 3];
+    const apexY = gy + 5.3 * sc, baseY = gy + 0.3 * sc, rad = 1.45 * sc;
+    for (let s = 0; s < LOOK_CONE_SEG; s++) {
+      const a0 = s / LOOK_CONE_SEG * Math.PI * 2, a1 = (s + 1) / LOOK_CONE_SEG * Math.PI * 2;
+      pos[o] = x; pos[o + 1] = apexY; pos[o + 2] = z;
+      pos[o + 3] = x + Math.cos(a0) * rad; pos[o + 4] = baseY; pos[o + 5] = z + Math.sin(a0) * rad;
+      pos[o + 6] = x + Math.cos(a1) * rad; pos[o + 7] = baseY; pos[o + 8] = z + Math.sin(a1) * rad;
+      o += 9;
+    }
+  }
+  C.attr.needsUpdate = true;
+  C.geo.setDrawRange(0, n * LOOK_CONE_SEG * 3);
+}
 
 /* ═════════════════ particle pools (preallocated) ═════════════════ */
 const SPRAY_N = LOWFX ? 130 : 280;

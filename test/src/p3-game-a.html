@@ -23,6 +23,11 @@ try {
 // ?turbo=N (testing only): run N real sim ticks per rAF so the harness can
 // play the whole course fast. Same sim, same input path — just more ticks.
 const TURBO = Math.min(30, Math.max(0, parseInt(QS.get('turbo') || '0', 10) || 0));
+// THE LOOK PASS — ACES tone mapping, lambert-lit world, ONE 1024
+// skier-following shadow map, one fullscreen grade pass. Every ingredient
+// measured Pi-legal (gameconsole/lab, 2026-09-12). DEFAULT ON since
+// PP-LOOK-1; ?look=0 is the escape hatch back to the flat pipeline.
+const LOOK = QS.get('look') !== '0';
 
 const MTN_KEY = 'powderpeak_mtn';       // last-played mountain id
 const HOP_VY = 3.0;                     // ground hop impulse (west button)
